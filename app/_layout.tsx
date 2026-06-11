@@ -1,10 +1,11 @@
 import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '@/components/useColorScheme';
+import { colors } from '@/lib/design';
+import { useUserStore } from '@/stores/useUserStore';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -12,7 +13,6 @@ export {
 } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
   initialRouteName: '(tabs)',
 };
 
@@ -43,13 +43,43 @@ export default function RootLayout() {
 }
 
 function RootLayoutNav() {
-  const colorScheme = useColorScheme();
+  const router = useRouter();
+  const segments = useSegments();
+  const { onboardingCompleted, profile } = useUserStore();
+  const isReady = Boolean(profile && onboardingCompleted);
+
+  useEffect(() => {
+    const routeGroup = segments[0];
+
+    if (!isReady && routeGroup !== '(onboarding)') {
+      router.replace('/(onboarding)');
+    }
+
+    if (isReady && routeGroup === '(onboarding)') {
+      router.replace('/(tabs)');
+    }
+  }, [isReady, router, segments]);
+
+  const lifeOSTheme = {
+    ...DarkTheme,
+    colors: {
+      ...DarkTheme.colors,
+      background: colors.background,
+      card: colors.surface1,
+      border: colors.border,
+      primary: colors.violet,
+      text: colors.textPrimary,
+    },
+  };
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+    <ThemeProvider value={lifeOSTheme}>
+      <Stack screenOptions={{ contentStyle: { backgroundColor: colors.background }, headerShown: false }}>
+        <Stack.Screen name="(onboarding)" />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="ai-coach" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="learning" />
+        <Stack.Screen name="finance" />
       </Stack>
     </ThemeProvider>
   );
