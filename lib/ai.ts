@@ -79,8 +79,8 @@ export const getMealSuggestion = () =>
 export const getWeeklyReview = () =>
   callAI('Write a concise weekly review across nutrition, gym, goals, habits, and learning.');
 
-export const getDailyBrief = () =>
-  callAI('Create a brief daily command-center summary with the most important next action.');
+export const getDailyBrief = (context?: AIContext) =>
+  callAI('Create a brief daily command-center summary with the most important next action.', context);
 
 export const getPatternInsight = () =>
   callAI('Identify one pattern from recent meals, workouts, habits, and goals.');

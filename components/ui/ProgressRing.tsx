@@ -1,4 +1,4 @@
-import { Text, View, StyleSheet } from 'react-native';
+import { Text, View, StyleSheet, type TextStyle } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import { colors, typography } from '@/lib/design';
@@ -9,6 +9,9 @@ type Props = {
   strokeWidth?: number;
   color?: string;
   label?: string;
+  arcDegrees?: number;
+  valueStyle?: TextStyle;
+  labelStyle?: TextStyle;
 };
 
 export function ProgressRing({
@@ -17,16 +20,32 @@ export function ProgressRing({
   strokeWidth = 6,
   color = colors.violet,
   label,
+  arcDegrees = 360,
+  valueStyle,
+  labelStyle,
 }: Props) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
+  const arcLength = circumference * (Math.max(0, Math.min(360, arcDegrees)) / 360);
   const clamped = Math.max(0, Math.min(100, progress));
-  const offset = circumference - (clamped / 100) * circumference;
+  const offset = arcLength - (clamped / 100) * arcLength;
+  const rotation = arcDegrees === 360 ? -90 : -90 - (360 - arcDegrees) / 2;
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]}>
       <Svg width={size} height={size}>
-        <Circle cx={size / 2} cy={size / 2} r={radius} stroke={colors.surface3} strokeWidth={strokeWidth} fill="none" />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={colors.surface3}
+          strokeWidth={strokeWidth}
+          fill="none"
+          strokeDasharray={`${arcLength} ${circumference}`}
+          rotation={rotation}
+          origin={`${size / 2}, ${size / 2}`}
+          strokeLinecap="round"
+        />
         <Circle
           cx={size / 2}
           cy={size / 2}
@@ -34,16 +53,16 @@ export function ProgressRing({
           stroke={color}
           strokeWidth={strokeWidth}
           fill="none"
-          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDasharray={`${arcLength} ${circumference}`}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          rotation="-90"
+          rotation={rotation}
           origin={`${size / 2}, ${size / 2}`}
         />
       </Svg>
       <View style={styles.center}>
-        <Text style={styles.value}>{Math.round(clamped)}</Text>
-        {label ? <Text style={styles.label}>{label}</Text> : null}
+        <Text style={[styles.value, valueStyle]}>{Math.round(clamped)}</Text>
+        {label ? <Text style={[styles.label, labelStyle]}>{label}</Text> : null}
       </View>
     </View>
   );
