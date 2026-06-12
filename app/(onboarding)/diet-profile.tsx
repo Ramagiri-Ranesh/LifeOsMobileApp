@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
@@ -19,8 +19,6 @@ const foods = [
   { name: 'Chana', icon: 'apps-outline' },
   { name: 'Chicken', icon: 'fast-food-outline' },
 ] as const;
-const avoidFoods = ['Curd', 'Oats'];
-
 export default function DietProfileScreen() {
   const router = useRouter();
   const draft = useUserStore((state) => state.onboardingProfile);
@@ -28,8 +26,9 @@ export default function DietProfileScreen() {
   const [cuisinePrefs, setCuisinePrefs] = useState(draft.cuisinePrefs);
   const [foodsEaten, setFoodsEaten] = useState(draft.foodsEaten);
   const [foodsAvoided, setFoodsAvoided] = useState(draft.foodsAvoided);
-  const [firstMealTime] = useState(draft.firstMealTime);
-  const [lastMealTime] = useState(draft.lastMealTime);
+  const [dislikedFoodDraft, setDislikedFoodDraft] = useState('');
+  const [firstMealTime, setFirstMealTime] = useState(draft.firstMealTime);
+  const [lastMealTime, setLastMealTime] = useState(draft.lastMealTime);
   const [aiCalcCalories, setAiCalcCalories] = useState(draft.aiCalcCalories);
 
   const toggleArrayValue = (value: string, selectedValues: string[], setSelectedValues: (values: string[]) => void) => {
@@ -38,6 +37,19 @@ export default function DietProfileScreen() {
         ? selectedValues.filter((selectedValue) => selectedValue !== value)
         : [...selectedValues, value],
     );
+  };
+
+  const addDislikedFood = () => {
+    const nextFood = dislikedFoodDraft.trim();
+    if (!nextFood) return;
+    if (!foodsAvoided.some((food) => food.toLowerCase() === nextFood.toLowerCase())) {
+      setFoodsAvoided([...foodsAvoided, nextFood]);
+    }
+    setDislikedFoodDraft('');
+  };
+
+  const removeDislikedFood = (food: string) => {
+    setFoodsAvoided(foodsAvoided.filter((item) => item !== food));
   };
 
   const handleNext = () => {
@@ -57,7 +69,7 @@ export default function DietProfileScreen() {
       <StatusBar backgroundColor="transparent" barStyle="light-content" translucent />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ProgressDots step={3} />
-        <Text style={styles.kicker}>Step 3 of 4</Text>
+        <Text style={styles.kicker}>Step 3 of 5</Text>
         <Text style={styles.title}>Shape your diet profile</Text>
         <Text style={styles.subtitle}>Pick the foods LifeOS should build around, and the ones it should skip.</Text>
 
@@ -112,28 +124,40 @@ export default function DietProfileScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Foods to avoid</Text>
+          <Text style={styles.sectionTitle}>Foods you do not like</Text>
+          <View style={styles.addRow}>
+            <TextInput
+              autoCapitalize="words"
+              onChangeText={setDislikedFoodDraft}
+              onSubmitEditing={addDislikedFood}
+              placeholder="Add disliked food"
+              placeholderTextColor={colors.textMuted}
+              returnKeyType="done"
+              style={styles.addInput}
+              value={dislikedFoodDraft}
+            />
+            <Pressable accessibilityRole="button" onPress={addDislikedFood} style={styles.addButton}>
+              <Ionicons name="add" color={colors.background} size={20} />
+            </Pressable>
+          </View>
           <View style={styles.wrapRow}>
-            {avoidFoods.map((item) => {
-              const selected = foodsAvoided.includes(item);
-              return (
-                <SelectableChip
-                  key={item}
-                  label={item}
-                  selected={selected}
-                  selectedColor={colors.rose}
-                  onPress={() => toggleArrayValue(item, foodsAvoided, setFoodsAvoided)}
-                />
-              );
-            })}
+            {foodsAvoided.map((item) => (
+              <SelectableChip
+                key={item}
+                label={item}
+                selected
+                selectedColor={colors.rose}
+                onPress={() => removeDislikedFood(item)}
+              />
+            ))}
           </View>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Meal timing</Text>
           <View style={styles.timingStack}>
-            <TimeRow label="First meal" value={firstMealTime} />
-            <TimeRow label="Last meal" value={lastMealTime} />
+            <TimeInputRow label="First meal" value={firstMealTime} onChangeText={setFirstMealTime} />
+            <TimeInputRow label="Last meal" value={lastMealTime} onChangeText={setLastMealTime} />
           </View>
         </View>
 
@@ -185,23 +209,36 @@ function SelectableChip({ label, selected, selectedColor, onPress }: SelectableC
   );
 }
 
-function TimeRow({ label, value }: { label: string; value: string }) {
+function TimeInputRow({
+  label,
+  value,
+  onChangeText,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
   return (
-    <Pressable accessibilityRole="button" style={styles.timeRow}>
+    <View style={styles.timeRow}>
       <View style={styles.timeIcon}>
         <Ionicons name="time-outline" color={colors.amber} size={18} />
       </View>
       <Text style={styles.timeLabel}>{label}</Text>
-      <Text style={styles.timeValue}>{value}</Text>
-      <Ionicons name="chevron-forward" color={colors.textMuted} size={18} />
-    </Pressable>
+      <TextInput
+        onChangeText={onChangeText}
+        placeholder="07:00"
+        placeholderTextColor={colors.textMuted}
+        style={styles.timeInput}
+        value={value}
+      />
+    </View>
   );
 }
 
 function ProgressDots({ step }: { step: number }) {
   return (
     <View style={styles.dots}>
-      {[1, 2, 3, 4].map((dot) => (
+      {[1, 2, 3, 4, 5].map((dot) => (
         <View key={dot} style={[styles.dot, dot <= step && styles.dotActive]} />
       ))}
     </View>
@@ -265,6 +302,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
+  },
+  addRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  addInput: {
+    backgroundColor: colors.surface1,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    color: colors.textPrimary,
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    minHeight: 46,
+    paddingHorizontal: spacing.sm,
+  },
+  addButton: {
+    alignItems: 'center',
+    backgroundColor: colors.rose,
+    borderRadius: radii.inner,
+    height: 46,
+    justifyContent: 'center',
+    width: 46,
   },
   chip: {
     alignItems: 'center',
@@ -354,11 +416,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  timeValue: {
+  timeInput: {
     color: colors.textPrimary,
     fontSize: 14,
     fontWeight: '800',
-    marginRight: spacing.xs,
+    minWidth: 92,
+    paddingVertical: 8,
+    textAlign: 'right',
   },
   toggleCard: {
     alignItems: 'center',

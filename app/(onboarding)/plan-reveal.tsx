@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -15,12 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { callAI } from '@/lib/ai';
 import { calculateMacros, calculateTDEE, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
 import { colors, radii, spacing, typography } from '@/lib/design';
-import { supabase } from '@/lib/supabase';
-import { useUserStore, type UserProfile } from '@/stores/useUserStore';
-import type { Json } from '@/types/database';
+import { useUserStore, type GeneratedPlan, type UserProfile } from '@/stores/useUserStore';
 
-const ARJUN_HEIGHT_CM = 175;
-const ARJUN_AGE = 29;
 const defaultBullets = [
   'Hit 4 gym sessions with two push, one pull, and one legs workout.',
   'Keep protein steady at every meal and use familiar foods first.',
@@ -32,31 +28,59 @@ const defaultDayPills = ['Push', 'Pull', 'Legs', 'Rest', 'Push', 'Pull', 'Rest']
 type WeekPlan = {
   workoutSplit: string;
   dayPills: string[];
-  bullets: string[];
+  firstWeekGoals: string[];
+  calorieTarget: number;
+  macros: { protein: number; carbs: number; fat: number };
+  waterTargetMl: number;
 };
+
+const planCache = new Map<string, WeekPlan>();
+const planRequests = new Map<string, Promise<WeekPlan | null>>();
 
 export default function PlanRevealScreen() {
   const router = useRouter();
   const draft = useUserStore((state) => state.onboardingProfile);
   const setProfile = useUserStore((state) => state.setProfile);
   const setPlanTargets = useUserStore((state) => state.setPlanTargets);
-  const completeOnboarding = useUserStore((state) => state.completeOnboarding);
+  const setGeneratedPlan = useUserStore((state) => state.setGeneratedPlan);
   const [plan, setPlan] = useState<WeekPlan>({
     workoutSplit: 'PPL schedule',
     dayPills: defaultDayPills,
-    bullets: defaultBullets,
+    firstWeekGoals: defaultBullets,
+    calorieTarget: 2380,
+    macros: { protein: 165, carbs: 240, fat: 72 },
+    waterTargetMl: 3000,
   });
+  const [aiStatus, setAiStatus] = useState('Calculating with AI...');
   const [isSaving, setIsSaving] = useState(false);
+  const hasGeneratedPlan = useRef(false);
   const checkScale = useSharedValue(0.4);
   const checkOpacity = useSharedValue(0);
 
   const activityLevel = useMemo(() => getActivityLevel(draft.gymDaysPerWeek), [draft.gymDaysPerWeek]);
   const fitnessGoal = useMemo(() => getFitnessGoal(draft.goal), [draft.goal]);
-  const calorieTarget = useMemo(
-    () => calculateTDEE(draft.currentWeight, ARJUN_HEIGHT_CM, ARJUN_AGE, activityLevel),
-    [activityLevel, draft.currentWeight],
+  const fallbackCalorieTarget = useMemo(
+    () => calculateTDEE(draft.currentWeight, draft.heightCm, draft.age, activityLevel),
+    [activityLevel, draft.age, draft.currentWeight, draft.heightCm],
   );
-  const macros = useMemo(() => calculateMacros(calorieTarget, fitnessGoal), [calorieTarget, fitnessGoal]);
+  const fallbackMacros = useMemo(
+    () => calculateMacros(fallbackCalorieTarget, fitnessGoal),
+    [fallbackCalorieTarget, fitnessGoal],
+  );
+  const fallbackWaterTargetMl = useMemo(
+    () => Math.round(Math.max(2200, draft.currentWeight * 35) / 250) * 250,
+    [draft.currentWeight],
+  );
+  const planCacheKey = useMemo(
+    () =>
+      JSON.stringify({
+        draft,
+        fallbackCalorieTarget,
+        fallbackMacros,
+        fallbackWaterTargetMl,
+      }),
+    [draft, fallbackCalorieTarget, fallbackMacros, fallbackWaterTargetMl],
+  );
 
   const checkStyle = useAnimatedStyle(() => ({
     opacity: checkOpacity.value,
@@ -72,21 +96,37 @@ export default function PlanRevealScreen() {
     let isMounted = true;
 
     const generatePlan = async () => {
+      if (hasGeneratedPlan.current) return;
+      hasGeneratedPlan.current = true;
+
+      const cachedPlan = planCache.get(planCacheKey);
+      if (cachedPlan) {
+        setPlan(cachedPlan);
+        setAiStatus('AI plan restored from this session.');
+        return;
+      }
+
       try {
-        const response = await callAI(
-          'Generate a first-week fitness and nutrition onboarding plan. Return only JSON with keys workoutSplit, dayPills as 7 short labels, and bullets as exactly 4 concise goals.',
-          {
-            onboardingProfile: draft,
-            calorieTarget,
-            macros,
-          },
-        );
-        const parsedPlan = parseWeekPlan(response);
+        const pendingPlan =
+          planRequests.get(planCacheKey) ??
+          requestGeneratedPlan(planCacheKey, {
+            draft,
+            fallbackCalorieTarget,
+            fallbackMacros,
+            fallbackWaterTargetMl,
+          });
+        planRequests.set(planCacheKey, pendingPlan);
+        const parsedPlan = await pendingPlan;
         if (isMounted && parsedPlan) {
           setPlan(parsedPlan);
+          planCache.set(planCacheKey, parsedPlan);
+          setAiStatus('AI plan generated with Gemini.');
+        } else if (isMounted) {
+          setAiStatus('Gemini quota is unavailable, so LifeOS used the safe fallback calculation.');
         }
       } catch (error) {
         console.warn('First-week plan generation unavailable.', error);
+        if (isMounted) setAiStatus('AI plan generation failed, so LifeOS used the safe fallback calculation.');
       }
     };
 
@@ -95,14 +135,17 @@ export default function PlanRevealScreen() {
     return () => {
       isMounted = false;
     };
-  }, [calorieTarget, draft, macros]);
+  }, [draft, fallbackCalorieTarget, fallbackMacros, fallbackWaterTargetMl, planCacheKey]);
 
   const fullProfile: UserProfile = {
-    name: 'Arjun',
+    name: draft.name,
+    age: draft.age,
+    heightCm: draft.heightCm,
     weightKg: draft.currentWeight,
     targetWeightKg: draft.targetWeight,
     gymDaysPerWeek: draft.gymDaysPerWeek,
     split: plan.workoutSplit,
+    waterTargetMl: plan.waterTargetMl,
     currency: 'INR',
     measurements: 'metric',
     goal: draft.goal,
@@ -119,36 +162,17 @@ export default function PlanRevealScreen() {
     if (isSaving) return;
 
     setIsSaving(true);
-    const savedProfile = JSON.parse(JSON.stringify(fullProfile)) as Json;
-    const savedPlan = JSON.parse(JSON.stringify(plan)) as Json;
-    const savedMacros = JSON.parse(JSON.stringify(macros)) as Json;
-    const payload: Record<string, Json> = {
-      name: fullProfile.name,
-      weight_kg: fullProfile.weightKg,
-      target_weight_kg: fullProfile.targetWeightKg,
-      gym_days_per_week: fullProfile.gymDaysPerWeek,
-      split: fullProfile.split,
-      currency: fullProfile.currency,
-      measurements: fullProfile.measurements,
-      goal: draft.goal,
-      experience_level: draft.experienceLevel,
-      cuisine_prefs: draft.cuisinePrefs,
-      foods_eaten: draft.foodsEaten,
-      foods_avoided: draft.foodsAvoided,
-      first_meal_time: draft.firstMealTime,
-      last_meal_time: draft.lastMealTime,
-      calorie_goal: calorieTarget,
-      macros: savedMacros,
-      first_week_plan: savedPlan,
-      onboarding_profile: savedProfile,
+    const generatedPlan: GeneratedPlan = {
+      workoutSplit: plan.workoutSplit,
+      dayPills: plan.dayPills,
+      firstWeekGoals: plan.firstWeekGoals,
+      waterTargetMl: plan.waterTargetMl,
     };
 
     setProfile(fullProfile);
-    setPlanTargets(calorieTarget, macros);
-    completeOnboarding();
-    router.replace('/(tabs)');
-
-    void saveProfile(payload);
+    setPlanTargets(plan.calorieTarget, plan.macros, plan.waterTargetMl);
+    setGeneratedPlan(generatedPlan);
+    router.push('/(onboarding)/register');
   };
 
   return (
@@ -161,19 +185,20 @@ export default function PlanRevealScreen() {
           <Ionicons name="checkmark" color={colors.background} size={48} />
         </Animated.View>
 
-        <Text style={styles.title}>Your plan is ready, Arjun</Text>
+        <Text style={styles.title}>Your plan is ready, {draft.name || 'you'}</Text>
+        <Text style={styles.aiStatus}>{aiStatus}</Text>
 
         <RevealCard index={0} accentColor={colors.emerald} backgroundColor={colors.emeraldBg}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardKicker}>Calorie target</Text>
             <Ionicons name="flame-outline" color={colors.emeraldLight} size={20} />
           </View>
-          <Text style={styles.calorieNumber}>{calorieTarget}</Text>
+          <Text style={styles.calorieNumber}>{plan.calorieTarget}</Text>
           <Text style={styles.calorieUnit}>kcal per day</Text>
           <View style={styles.macroRow}>
-            <MacroPill label="Protein" value={`${macros.protein}g`} />
-            <MacroPill label="Carbs" value={`${macros.carbs}g`} />
-            <MacroPill label="Fat" value={`${macros.fat}g`} />
+            <MacroPill label="Protein" value={`${plan.macros.protein}g`} />
+            <MacroPill label="Carbs" value={`${plan.macros.carbs}g`} />
+            <MacroPill label="Fat" value={`${plan.macros.fat}g`} />
           </View>
         </RevealCard>
 
@@ -192,16 +217,24 @@ export default function PlanRevealScreen() {
           </View>
         </RevealCard>
 
-        <RevealCard index={2} accentColor={colors.violet} backgroundColor={colors.violetBg}>
+        <RevealCard index={2} accentColor={colors.emerald} backgroundColor={colors.emeraldBg}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardKicker}>Water target</Text>
+            <Ionicons name="water-outline" color={colors.emeraldLight} size={20} />
+          </View>
+          <Text style={styles.splitTitle}>{plan.waterTargetMl} ml per day</Text>
+        </RevealCard>
+
+        <RevealCard index={3} accentColor={colors.violet} backgroundColor={colors.violetBg}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardKicker}>First week goals</Text>
             <Ionicons name="sparkles-outline" color={colors.violetLight} size={20} />
           </View>
           <View style={styles.goalList}>
-            {plan.bullets.slice(0, 4).map((bullet) => (
-              <View key={bullet} style={styles.goalRow}>
+            {plan.firstWeekGoals.slice(0, 4).map((goal) => (
+              <View key={goal} style={styles.goalRow}>
                 <View style={styles.goalDot} />
-                <Text style={styles.goalText}>{bullet}</Text>
+                <Text style={styles.goalText}>{goal}</Text>
               </View>
             ))}
           </View>
@@ -214,31 +247,11 @@ export default function PlanRevealScreen() {
           disabled={isSaving}
           onPress={handleFinish}
           style={[styles.primaryButton, isSaving && styles.primaryButtonDisabled]}>
-          <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : "Let's go →"}</Text>
+          <Text style={styles.primaryButtonText}>{isSaving ? 'Preparing...' : "Let's go →"}</Text>
         </Pressable>
       </View>
     </SafeAreaView>
   );
-}
-
-async function saveProfile(payload: Record<string, Json>) {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn('Skipping profile cloud save because Supabase is not configured.');
-    return;
-  }
-
-  try {
-    const { error } = await supabase.from('profiles').insert(payload);
-
-    if (error) {
-      console.warn('Unable to save onboarding profile to Supabase.', error);
-    }
-  } catch (error) {
-    console.warn('Unable to save onboarding profile to Supabase.', error);
-  }
 }
 
 function getActivityLevel(gymDaysPerWeek: number): ActivityLevel {
@@ -254,12 +267,59 @@ function getFitnessGoal(goal: string): FitnessGoal {
   return 'maintain';
 }
 
-function parseWeekPlan(response: string): WeekPlan | null {
+async function requestGeneratedPlan(
+  cacheKey: string,
+  context: {
+    draft: ReturnType<typeof useUserStore.getState>['onboardingProfile'];
+    fallbackCalorieTarget: number;
+    fallbackMacros: { protein: number; carbs: number; fat: number };
+    fallbackWaterTargetMl: number;
+  },
+) {
+  try {
+    const response = await callAI(
+      [
+        'Generate a first-week fitness and nutrition onboarding plan.',
+        'Return only JSON with keys calorieTarget, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills as 7 short labels, and firstWeekGoals as exactly 4 concise goals.',
+        'Use metric units. Respect disliked foods and meal timing. If aiCalcCalories is true, calculate calories from the user profile.',
+      ].join(' '),
+      {
+        onboardingProfile: context.draft,
+        fallbackCalorieTarget: context.fallbackCalorieTarget,
+        fallbackMacros: context.fallbackMacros,
+        fallbackWaterTargetMl: context.fallbackWaterTargetMl,
+      },
+    );
+
+    if (!response.trim()) return null;
+
+    const parsedPlan = parseWeekPlan(response, {
+      calorieTarget: context.fallbackCalorieTarget,
+      macros: context.fallbackMacros,
+      waterTargetMl: context.fallbackWaterTargetMl,
+    });
+    if (parsedPlan) planCache.set(cacheKey, parsedPlan);
+    return parsedPlan;
+  } finally {
+    planRequests.delete(cacheKey);
+  }
+}
+
+function parseWeekPlan(
+  response: string,
+  fallback: Pick<WeekPlan, 'calorieTarget' | 'macros' | 'waterTargetMl'>,
+): WeekPlan | null {
   const jsonText = response.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
 
   try {
     const parsed = JSON.parse(jsonText) as Partial<WeekPlan>;
-    const bullets = Array.isArray(parsed.bullets) ? parsed.bullets.filter(Boolean).map(String).slice(0, 4) : [];
+    const parsedMacros = parsed.macros && typeof parsed.macros === 'object' ? parsed.macros : fallback.macros;
+    const firstWeekGoalsSource = Array.isArray(parsed.firstWeekGoals)
+      ? parsed.firstWeekGoals
+      : Array.isArray((parsed as { bullets?: unknown }).bullets)
+        ? (parsed as { bullets: unknown[] }).bullets
+        : [];
+    const firstWeekGoals = firstWeekGoalsSource.filter(Boolean).map(String).slice(0, 4);
     const dayPills = Array.isArray(parsed.dayPills)
       ? parsed.dayPills.filter(Boolean).map(String).slice(0, 7)
       : defaultDayPills;
@@ -267,29 +327,44 @@ function parseWeekPlan(response: string): WeekPlan | null {
     return {
       workoutSplit: parsed.workoutSplit ? String(parsed.workoutSplit) : 'PPL schedule',
       dayPills: dayPills.length === 7 ? dayPills : defaultDayPills,
-      bullets: bullets.length === 4 ? bullets : defaultBullets,
+      firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
+      calorieTarget: cleanNumber(parsed.calorieTarget, fallback.calorieTarget),
+      macros: {
+        protein: cleanNumber(parsedMacros.protein, fallback.macros.protein),
+        carbs: cleanNumber(parsedMacros.carbs, fallback.macros.carbs),
+        fat: cleanNumber(parsedMacros.fat, fallback.macros.fat),
+      },
+      waterTargetMl: cleanNumber(parsed.waterTargetMl, fallback.waterTargetMl),
     };
   } catch {
-    const bullets = response
+    const firstWeekGoals = response
       .split('\n')
       .map((line) => line.replace(/^[-*0-9. ]+/, '').trim())
       .filter(Boolean)
       .slice(0, 4);
 
-    if (bullets.length === 0) return null;
+    if (firstWeekGoals.length === 0) return null;
 
     return {
       workoutSplit: 'PPL schedule',
       dayPills: defaultDayPills,
-      bullets: bullets.length === 4 ? bullets : defaultBullets,
+      firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
+      calorieTarget: fallback.calorieTarget,
+      macros: fallback.macros,
+      waterTargetMl: fallback.waterTargetMl,
     };
   }
+}
+
+function cleanNumber(value: unknown, fallback: number) {
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : fallback;
 }
 
 function ProgressDots({ step }: { step: number }) {
   return (
     <View style={styles.dots}>
-      {[1, 2, 3, 4].map((dot) => (
+      {[1, 2, 3, 4, 5].map((dot) => (
         <View key={dot} style={[styles.dot, dot <= step && styles.dotActive]} />
       ))}
     </View>
@@ -379,6 +454,14 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     marginBottom: spacing.md,
     marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  aiStatus: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: spacing.sm,
+    marginTop: -spacing.sm,
     textAlign: 'center',
   },
   revealCard: {

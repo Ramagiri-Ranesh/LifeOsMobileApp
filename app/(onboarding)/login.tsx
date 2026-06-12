@@ -1,0 +1,208 @@
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
+import { Alert, Pressable, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { colors, radii, spacing, typography } from '@/lib/design';
+import { hashPassword, normalizeUsername } from '@/lib/password';
+import { profileFromRow } from '@/lib/profile';
+import { supabase } from '@/lib/supabase';
+import { useGymStore } from '@/stores/useGymStore';
+import { useUserStore } from '@/stores/useUserStore';
+import type { Json } from '@/types/database';
+
+type LooseRow = Record<string, Json | undefined>;
+
+export default function LoginScreen() {
+  const router = useRouter();
+  const setSession = useUserStore((state) => state.setSession);
+  const setProfile = useUserStore((state) => state.setProfile);
+  const setPlanTargets = useUserStore((state) => state.setPlanTargets);
+  const setGeneratedPlan = useUserStore((state) => state.setGeneratedPlan);
+  const completeOnboarding = useUserStore((state) => state.completeOnboarding);
+  const setCurrentSplit = useGymStore((state) => state.setCurrentSplit);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async () => {
+    const normalizedUsername = normalizeUsername(username);
+    if (!normalizedUsername || !password) {
+      Alert.alert('Login details required', 'Enter your username and password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('username', normalizedUsername)
+        .maybeSingle();
+
+      if (error) throw error;
+      const row = data as LooseRow | null;
+      if (!row || row.password_hash !== hashPassword(normalizedUsername, password)) {
+        Alert.alert('Login failed', 'Username or password is incorrect.');
+        return;
+      }
+
+      const restored = profileFromRow(row);
+      if (!restored.onboardingCompleted) {
+        Alert.alert('Onboarding incomplete', 'Please finish onboarding for this account.');
+        router.replace('/(onboarding)/basic-profile');
+        return;
+      }
+
+      const userId = String(row.id ?? '');
+      setSession({ userId, username: normalizedUsername });
+      setProfile({ ...restored.profile, id: userId, username: normalizedUsername });
+      setPlanTargets(restored.calorieGoal, restored.macros, restored.profile.waterTargetMl);
+      if (restored.generatedPlan) setGeneratedPlan(restored.generatedPlan);
+      setCurrentSplit(restored.generatedPlan?.workoutSplit ?? restored.profile.split);
+      completeOnboarding();
+      router.replace('/(tabs)');
+    } catch (error) {
+      console.warn('Unable to login', error);
+      Alert.alert('Login failed', 'Please check Supabase connection and try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar backgroundColor="transparent" barStyle="light-content" translucent />
+      <View style={styles.content}>
+        <View style={styles.icon}>
+          <Ionicons name="log-in-outline" color={colors.emeraldLight} size={34} />
+        </View>
+        <Text style={styles.title}>Welcome back</Text>
+        <Text style={styles.subtitle}>Login to open your dashboard without repeating onboarding.</Text>
+
+        <View style={styles.form}>
+          <Text style={styles.label}>Username</Text>
+          <TextInput
+            autoCapitalize="none"
+            onChangeText={setUsername}
+            placeholder="username"
+            placeholderTextColor={colors.textMuted}
+            style={styles.input}
+            value={username}
+          />
+
+          <Text style={styles.label}>Password</Text>
+          <TextInput
+            onChangeText={setPassword}
+            placeholder="password"
+            placeholderTextColor={colors.textMuted}
+            secureTextEntry
+            style={styles.input}
+            value={password}
+          />
+        </View>
+
+        <Pressable accessibilityRole="button" onPress={() => router.replace('/(onboarding)/basic-profile')} hitSlop={8}>
+          <Text style={styles.secondaryLink}>Create a new account</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.footer}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={loading}
+          onPress={handleLogin}
+          style={[styles.primaryButton, loading && styles.disabledButton]}>
+          <Text style={styles.primaryButtonText}>{loading ? 'Logging in...' : 'Login'}</Text>
+        </Pressable>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: colors.background,
+    flex: 1,
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: spacing.gutter,
+    paddingTop: spacing.xl,
+  },
+  icon: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: colors.emeraldBg,
+    borderColor: colors.border,
+    borderRadius: 32,
+    borderWidth: 1,
+    height: 64,
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+    width: 64,
+  },
+  title: {
+    ...typography.h1,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  subtitle: {
+    ...typography.body,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+    textAlign: 'center',
+  },
+  form: {
+    marginTop: spacing.xl,
+  },
+  label: {
+    ...typography.labelCaps,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+    marginTop: spacing.sm,
+    textTransform: 'uppercase',
+  },
+  input: {
+    backgroundColor: colors.surface1,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '700',
+    minHeight: 54,
+    paddingHorizontal: spacing.sm,
+  },
+  secondaryLink: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  footer: {
+    backgroundColor: colors.background,
+    bottom: 0,
+    left: 0,
+    padding: spacing.gutter,
+    position: 'absolute',
+    right: 0,
+  },
+  primaryButton: {
+    alignItems: 'center',
+    backgroundColor: colors.emerald,
+    borderRadius: radii.inner,
+    height: 52,
+    justifyContent: 'center',
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  primaryButtonText: {
+    color: colors.background,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+});

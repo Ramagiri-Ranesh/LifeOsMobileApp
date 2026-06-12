@@ -50,16 +50,16 @@ export default function RootLayout() {
 function RootLayoutNav() {
   const router = useRouter();
   const segments = useSegments();
-  const { onboardingCompleted, profile } = useUserStore();
+  const { currentUserId, hasRegisteredBefore, onboardingCompleted, profile } = useUserStore();
   const appLockEnabled = useSettingsStore((state) => state.appLockEnabled);
   const [unlocked, setUnlocked] = useState(!appLockEnabled);
-  const isReady = Boolean(profile && onboardingCompleted);
+  const isReady = Boolean(currentUserId && profile && onboardingCompleted);
 
   useEffect(() => {
     const routeGroup = segments[0];
 
     if (!isReady && routeGroup !== '(onboarding)') {
-      router.replace('/(onboarding)');
+      router.replace(hasRegisteredBefore ? '/(onboarding)/login' : '/(onboarding)');
     }
 
     if (isReady && routeGroup === '(onboarding)') {

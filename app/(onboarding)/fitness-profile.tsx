@@ -36,7 +36,7 @@ export default function FitnessProfileScreen() {
       <StatusBar backgroundColor="transparent" barStyle="light-content" translucent />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ProgressDots step={2} />
-        <Text style={styles.kicker}>Step 2 of 4</Text>
+        <Text style={styles.kicker}>Step 2 of 5</Text>
         <Text style={styles.title}>Tune your fitness profile</Text>
         <Text style={styles.subtitle}>A few basics help LifeOS shape your training and calorie targets.</Text>
 
@@ -146,7 +146,7 @@ export default function FitnessProfileScreen() {
 function ProgressDots({ step }: { step: number }) {
   return (
     <View style={styles.dots}>
-      {[1, 2, 3, 4].map((dot) => (
+      {[1, 2, 3, 4, 5].map((dot) => (
         <View key={dot} style={[styles.dot, dot <= step && styles.dotActive]} />
       ))}
     </View>

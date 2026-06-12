@@ -6,9 +6,12 @@ export default function OnboardingLayout() {
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Screen name="index" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="basic-profile" />
       <Stack.Screen name="fitness-profile" />
       <Stack.Screen name="diet-profile" />
       <Stack.Screen name="plan-reveal" />
+      <Stack.Screen name="register" />
     </Stack>
   );
 }

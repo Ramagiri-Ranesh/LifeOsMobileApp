@@ -49,7 +49,6 @@ type ActionTile = {
   onPress: () => void;
 };
 
-const WATER_GOAL = 8;
 const WATER_GLASS_ML = 250;
 
 function todayKey(date = new Date()) {
@@ -124,8 +123,11 @@ export default function DailyHubScreen() {
   const params = useLocalSearchParams<{ reflection?: string }>();
   const insets = useSafeAreaInsets();
   const profile = useUserStore((state) => state.profile);
+  const currentUserId = useUserStore((state) => state.currentUserId);
+  const onboardingCompleted = useUserStore((state) => state.onboardingCompleted);
   const onboardingProfile = useUserStore((state) => state.onboardingProfile);
   const calorieGoal = useUserStore((state) => state.calorieGoal);
+  const waterTargetMl = useUserStore((state) => state.waterTargetMl);
   const todaysMeals = useNutritionStore((state) => state.todaysMeals);
   const calories = useNutritionStore((state) => state.calories);
   const waterMl = useNutritionStore((state) => state.waterMl);
@@ -136,13 +138,14 @@ export default function DailyHubScreen() {
   const setLifeScore = useAnalyticsStore((state) => state.setLifeScore);
 
   const [tasks, setTasks] = useState<LooseRow[]>([]);
-  const [waterCount, setWaterCount] = useState(Math.min(WATER_GOAL, Math.round(waterMl / WATER_GLASS_ML)));
+  const waterGoalGlasses = Math.max(1, Math.round(waterTargetMl / WATER_GLASS_ML));
+  const [waterCount, setWaterCount] = useState(Math.min(waterGoalGlasses, Math.round(waterMl / WATER_GLASS_ML)));
   const [brief, setBrief] = useState('Preparing your morning brief...');
   const [reflectionVisible, setReflectionVisible] = useState(false);
   const [reflection, setReflection] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  const name = profile?.name ?? onboardingProfile.goal.split(' ')[0] ?? 'Rama';
+  const name = profile?.name || onboardingProfile.name || 'User';
   const caloriesRemaining = Math.max(0, calorieGoal - calories);
   const completedTasks = tasks.filter(isTaskDone).length;
   const taskTotal = tasks.length;
@@ -181,10 +184,17 @@ export default function DailyHubScreen() {
   }, [activeSession.length, currentSplit, tasks, todaysMeals]);
 
   const loadToday = useCallback(async () => {
+    if (!currentUserId || !profile || !onboardingCompleted) {
+      return;
+    }
+
     const date = todayKey();
+    const waterRequest = currentUserId
+      ? supabase.from('water_log').select('*').eq('date', date).eq('user_id', currentUserId)
+      : supabase.from('water_log').select('*').eq('date', date);
     const [{ data: taskRows, error: taskError }, { data: waterRows, error: waterError }] = await Promise.all([
       supabase.from('tasks').select('*'),
-      supabase.from('water_log').select('*').eq('date', date),
+      waterRequest,
     ]);
 
     if (taskError) console.warn('Unable to load tasks', taskError.message);
@@ -192,15 +202,15 @@ export default function DailyHubScreen() {
 
     const todayTasks = ((taskRows ?? []) as LooseRow[]).filter((task) => rowDate(task) === date);
     const glasses = Math.min(
-      WATER_GOAL,
+      waterGoalGlasses,
       ((waterRows ?? []) as LooseRow[]).reduce((total, row) => total + waterGlasses(row), 0),
     );
-    const nextWater = glasses > 0 ? glasses : Math.min(WATER_GOAL, Math.round(waterMl / WATER_GLASS_ML));
+    const nextWater = glasses > 0 ? glasses : Math.min(waterGoalGlasses, Math.round(waterMl / WATER_GLASS_ML));
     const nutritionScore = calculateGoalScore(Math.min(calories, calorieGoal), calorieGoal);
     const fitnessScore = activeSession.length > 0 ? 85 : 45;
     const productivityScore =
       todayTasks.length > 0 ? calculateGoalScore(todayTasks.filter(isTaskDone).length, todayTasks.length) : 50;
-    const habitsScore = calculateGoalScore(nextWater, WATER_GOAL);
+    const habitsScore = calculateGoalScore(nextWater, waterGoalGlasses);
     const score = calculateLifeScore({
       nutritionScore,
       fitnessScore,
@@ -236,10 +246,14 @@ export default function DailyHubScreen() {
     calories,
     caloriesRemaining,
     currentSplit,
+    currentUserId,
+    onboardingCompleted,
+    profile,
     setLifeScore,
     setWaterMl,
     todaysMeals,
     waterMl,
+    waterGoalGlasses,
   ]);
 
   const refreshToday = useCallback(async () => {
@@ -260,29 +274,26 @@ export default function DailyHubScreen() {
   }, [params.reflection]);
 
   const addWater = useCallback(async () => {
-    const next = Math.min(WATER_GOAL, waterCount + 1);
+    const next = Math.min(waterGoalGlasses, waterCount + 1);
     if (next === waterCount) return;
 
     setWaterCount(next);
     setWaterMl(next * WATER_GLASS_ML);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
     const payload: LooseRow = {
       date: todayKey(),
       glasses: 1,
+      target_ml: waterTargetMl,
     };
 
-    if (user?.id) payload.user_id = user.id;
+    if (currentUserId) payload.user_id = currentUserId;
 
     const { error } = await supabase.from('water_log').insert(payload);
     if (error) {
       console.warn('Unable to update water log', error.message);
       Alert.alert('Water not synced', 'Your glass was added locally, but Supabase did not update.');
     }
-  }, [setWaterMl, waterCount]);
+  }, [currentUserId, setWaterMl, waterCount, waterGoalGlasses, waterTargetMl]);
 
   const actions: ActionTile[] = [
     { label: 'Log Meal', icon: 'restaurant-outline', onPress: () => router.push('/(tabs)/nutrition') },
@@ -365,13 +376,13 @@ export default function DailyHubScreen() {
 
       <LifeOSCard accentColor={colors.emerald} style={styles.waterCard}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Hydration · {waterCount} / 8 glasses</Text>
+          <Text style={styles.cardTitle}>Hydration · {waterCount} / {waterGoalGlasses} glasses</Text>
           <TouchableOpacity accessibilityRole="button" onPress={addWater} style={styles.plusButton}>
             <Ionicons name="add" size={20} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
         <View style={styles.dropletRow}>
-          {Array.from({ length: WATER_GOAL }).map((_, index) => {
+          {Array.from({ length: waterGoalGlasses }).map((_, index) => {
             const filled = index < waterCount;
             return (
               <Ionicons

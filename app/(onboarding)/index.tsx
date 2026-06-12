@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect } from 'react';
-import { Alert, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 import { useUserStore } from '@/stores/useUserStore';
@@ -8,20 +8,24 @@ import { useUserStore } from '@/stores/useUserStore';
 export default function WelcomeScreen() {
   const router = useRouter();
   const onboardingComplete = useUserStore((state) => state.onboardingCompleted);
+  const hasRegisteredBefore = useUserStore((state) => state.hasRegisteredBefore);
 
   useEffect(() => {
     if (onboardingComplete) {
       router.replace('/(tabs)');
+      return;
     }
-  }, [onboardingComplete, router]);
+
+    if (hasRegisteredBefore) {
+      router.replace('/(onboarding)/login');
+    }
+  }, [hasRegisteredBefore, onboardingComplete, router]);
 
   const handleGetStarted = () => {
-    router.push('/(onboarding)/fitness-profile');
+    router.push('/(onboarding)/basic-profile');
   };
 
-  const handleRestoreBackup = () => {
-    Alert.alert('Coming soon', 'Backup restore is coming soon.');
-  };
+  const handleLogin = () => router.push('/(onboarding)/login');
 
   return (
     <View style={styles.container}>
@@ -44,8 +48,8 @@ export default function WelcomeScreen() {
           <Text style={styles.primaryButtonText}>Get started →</Text>
         </Pressable>
 
-        <Pressable accessibilityRole="button" onPress={handleRestoreBackup} hitSlop={8}>
-          <Text style={styles.restoreText}>Already have data? Restore backup</Text>
+        <Pressable accessibilityRole="button" onPress={handleLogin} hitSlop={8}>
+          <Text style={styles.restoreText}>Already registered? Login</Text>
         </Pressable>
       </View>
     </View>
