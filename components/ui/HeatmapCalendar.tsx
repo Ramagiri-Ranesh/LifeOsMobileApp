@@ -10,22 +10,30 @@ type HeatmapDay = {
 type Props = {
   days?: HeatmapDay[];
   color?: string;
+  weeks?: number;
+  maxValue?: number;
+  today?: string;
 };
 
-export function HeatmapCalendar({ days = [], color = colors.violet }: Props) {
-  const cells = Array.from({ length: 35 }, (_, index) => days[index]?.value ?? 0);
+function intensityColor(value: number, maxValue: number, color: string) {
+  if (value <= 0) return '#1A1A1A';
+  const intensity = maxValue > 0 ? Math.min(1, value / maxValue) : 1;
+  const alpha = intensity < 0.34 ? '55' : intensity < 0.67 ? '99' : 'FF';
+  return color.length === 7 ? `${color}${alpha}` : color;
+}
+
+export function HeatmapCalendar({ days = [], color = colors.violet, weeks = 5, maxValue = 7, today }: Props) {
+  const cells = Array.from({ length: weeks * 7 }, (_, index) => days[index] ?? { date: `${index}`, value: 0 });
 
   return (
-    <View style={styles.grid}>
-      {cells.map((value, index) => (
+    <View style={[styles.grid, { width: weeks * 16 - spacing.base }]}>
+      {cells.map((day, index) => (
         <View
-          key={`${index}-${value}`}
+          key={`${day.date}-${index}`}
           style={[
             styles.cell,
-            {
-              backgroundColor: value > 0 ? color : colors.surface3,
-              opacity: value > 0 ? Math.max(0.25, Math.min(1, value / 5)) : 1,
-            },
+            { backgroundColor: intensityColor(day.value, maxValue, color) },
+            today === day.date && styles.todayCell,
           ]}
         />
       ))}
@@ -44,5 +52,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.inner / 3,
     height: 12,
     width: 12,
+  },
+  todayCell: {
+    borderColor: colors.textPrimary,
+    borderWidth: 1,
   },
 });

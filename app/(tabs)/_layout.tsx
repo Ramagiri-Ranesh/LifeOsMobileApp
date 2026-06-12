@@ -17,6 +17,7 @@ export default function TabLayout() {
       <Tabs.Screen name="goals" options={{ title: 'Goals' }} />
       <Tabs.Screen name="analytics" options={{ title: 'Analytics' }} />
       <Tabs.Screen name="habits" options={{ title: 'Habits' }} />
+      <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
     </Tabs>
   );
 }

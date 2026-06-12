@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Text, View, StyleSheet, type TextStyle } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
@@ -12,6 +13,7 @@ type Props = {
   arcDegrees?: number;
   valueStyle?: TextStyle;
   labelStyle?: TextStyle;
+  children?: ReactNode;
 };
 
 export function ProgressRing({
@@ -23,6 +25,7 @@ export function ProgressRing({
   arcDegrees = 360,
   valueStyle,
   labelStyle,
+  children,
 }: Props) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -42,8 +45,7 @@ export function ProgressRing({
           strokeWidth={strokeWidth}
           fill="none"
           strokeDasharray={`${arcLength} ${circumference}`}
-          rotation={rotation}
-          origin={`${size / 2}, ${size / 2}`}
+          transform={`rotate(${rotation} ${size / 2} ${size / 2})`}
           strokeLinecap="round"
         />
         <Circle
@@ -56,13 +58,16 @@ export function ProgressRing({
           strokeDasharray={`${arcLength} ${circumference}`}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          rotation={rotation}
-          origin={`${size / 2}, ${size / 2}`}
+          transform={`rotate(${rotation} ${size / 2} ${size / 2})`}
         />
       </Svg>
       <View style={styles.center}>
-        <Text style={[styles.value, valueStyle]}>{Math.round(clamped)}</Text>
-        {label ? <Text style={[styles.label, labelStyle]}>{label}</Text> : null}
+        {children ?? (
+          <>
+            <Text style={[styles.value, valueStyle]}>{Math.round(clamped)}</Text>
+            {label ? <Text style={[styles.label, labelStyle]}>{label}</Text> : null}
+          </>
+        )}
       </View>
     </View>
   );

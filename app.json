@@ -8,7 +8,14 @@
     "scheme": "lifeos",
     "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "fetch",
+          "remote-notification"
+        ],
+        "NSFaceIDUsageDescription": "LifeOS uses Face ID to protect your personal tracking data."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -26,6 +33,8 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
+      "expo-local-authentication",
       [
         "expo-splash-screen",
         {

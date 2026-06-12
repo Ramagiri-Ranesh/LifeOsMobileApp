@@ -1,10 +1,15 @@
+import 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
 import { DarkTheme, Stack, ThemeProvider, useRouter, useSegments } from 'expo-router';
+import * as LocalAuthentication from 'expo-local-authentication';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { colors } from '@/lib/design';
+import { registerLifeOSBackgroundTasks, registerNotificationResponseHandler } from '@/lib/notifications';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
 
 export {
@@ -46,6 +51,8 @@ function RootLayoutNav() {
   const router = useRouter();
   const segments = useSegments();
   const { onboardingCompleted, profile } = useUserStore();
+  const appLockEnabled = useSettingsStore((state) => state.appLockEnabled);
+  const [unlocked, setUnlocked] = useState(!appLockEnabled);
   const isReady = Boolean(profile && onboardingCompleted);
 
   useEffect(() => {
@@ -59,6 +66,30 @@ function RootLayoutNav() {
       router.replace('/(tabs)');
     }
   }, [isReady, router, segments]);
+
+  useEffect(() => registerNotificationResponseHandler(router), [router]);
+
+  useEffect(() => {
+    void registerLifeOSBackgroundTasks();
+  }, []);
+
+  useEffect(() => {
+    if (!appLockEnabled || Platform.OS === 'web') {
+      setUnlocked(true);
+      return;
+    }
+
+    setUnlocked(false);
+    void unlockApp();
+  }, [appLockEnabled]);
+
+  async function unlockApp() {
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Unlock LifeOS',
+      fallbackLabel: 'Use passcode',
+    });
+    setUnlocked(result.success);
+  }
 
   const lifeOSTheme = {
     ...DarkTheme,
@@ -74,13 +105,54 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={lifeOSTheme}>
-      <Stack screenOptions={{ contentStyle: { backgroundColor: colors.background }, headerShown: false }}>
-        <Stack.Screen name="(onboarding)" />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="ai-coach" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="learning" />
-        <Stack.Screen name="finance" />
-      </Stack>
+      {!unlocked ? (
+        <View style={styles.lockScreen}>
+          <Text style={styles.lockTitle}>LifeOS locked</Text>
+          <Text style={styles.lockBody}>Authenticate to continue.</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={unlockApp} style={styles.lockButton}>
+            <Text style={styles.lockButtonText}>Unlock</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <Stack screenOptions={{ contentStyle: { backgroundColor: colors.background }, headerShown: false }}>
+          <Stack.Screen name="(onboarding)" />
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="ai-coach" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="learning" />
+          <Stack.Screen name="finance" />
+        </Stack>
+      )}
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  lockScreen: {
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    flex: 1,
+    gap: 12,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  lockTitle: {
+    color: colors.textPrimary,
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  lockBody: {
+    color: colors.textSecondary,
+    fontSize: 14,
+  },
+  lockButton: {
+    backgroundColor: colors.violetLight,
+    borderRadius: 12,
+    marginTop: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+  },
+  lockButtonText: {
+    color: colors.background,
+    fontWeight: '800',
+  },
+});

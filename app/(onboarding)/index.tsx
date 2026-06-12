@@ -65,9 +65,7 @@ function ProgressArcIcon() {
         fill="none"
         strokeLinecap="round"
         strokeDasharray="138 182"
-        rotation="-92"
-        originX={40}
-        originY={40}
+        transform="rotate(-92 40 40)"
       />
       <Circle cx={62} cy={18} r={5} fill="#10B981" />
       <Circle cx={19} cy={59} r={5} fill="#F59E0B" />

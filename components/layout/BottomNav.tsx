@@ -10,6 +10,7 @@ const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
   goals: 'flag-outline',
   analytics: 'analytics-outline',
   habits: 'repeat-outline',
+  settings: 'settings-outline',
 };
 
 type BottomNavProps = {

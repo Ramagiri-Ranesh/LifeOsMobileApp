@@ -11,6 +11,13 @@ const activityMultipliers: Record<ActivityLevel, number> = {
 
 const clampScore = (value: number) => Math.max(0, Math.min(100, value));
 
+function localDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function calculateTDEE(weightKg: number, heightCm: number, age: number, activityLevel: ActivityLevel) {
   const bmr = 10 * weightKg + 6.25 * heightCm - 5 * age + 5;
   return Math.round(bmr * activityMultipliers[activityLevel]);
@@ -49,13 +56,20 @@ export function calculateGoalScore(current: number, target: number) {
   return clampScore((current / target) * 100);
 }
 
-export function calculateStreak(completedDates: string[], today = new Date()) {
+export function calculateStreak(
+  completedDates: string[],
+  today = new Date(),
+  options: { restDayIndexes?: number[] } = {},
+) {
   const completed = new Set(completedDates);
+  const restDays = new Set(options.restDayIndexes ?? []);
   let streak = 0;
   const cursor = new Date(today);
 
-  while (completed.has(cursor.toISOString().slice(0, 10))) {
-    streak += 1;
+  while (completed.has(localDateKey(cursor)) || restDays.has(cursor.getDay())) {
+    if (completed.has(localDateKey(cursor))) {
+      streak += 1;
+    }
     cursor.setDate(cursor.getDate() - 1);
   }
 

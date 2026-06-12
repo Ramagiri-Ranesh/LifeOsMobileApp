@@ -33,6 +33,7 @@ export type Database = {
       finance_transactions: Table;
       finance_categories: Table;
       weekly_summaries: Table;
+      ai_coach_messages: Table;
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

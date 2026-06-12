@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -115,7 +115,9 @@ export default function PlanRevealScreen() {
     aiCalcCalories: draft.aiCalcCalories,
   };
 
-  const handleFinish = async () => {
+  const handleFinish = () => {
+    if (isSaving) return;
+
     setIsSaving(true);
     const savedProfile = JSON.parse(JSON.stringify(fullProfile)) as Json;
     const savedPlan = JSON.parse(JSON.stringify(plan)) as Json;
@@ -135,25 +137,18 @@ export default function PlanRevealScreen() {
       foods_avoided: draft.foodsAvoided,
       first_meal_time: draft.firstMealTime,
       last_meal_time: draft.lastMealTime,
-      ai_calc_calories: draft.aiCalcCalories,
       calorie_goal: calorieTarget,
       macros: savedMacros,
       first_week_plan: savedPlan,
       onboarding_profile: savedProfile,
     };
 
-    const { error } = await supabase.from('profiles').insert(payload);
-    setIsSaving(false);
-
-    if (error) {
-      Alert.alert('Could not save profile', error.message);
-      return;
-    }
-
     setProfile(fullProfile);
     setPlanTargets(calorieTarget, macros);
     completeOnboarding();
     router.replace('/(tabs)');
+
+    void saveProfile(payload);
   };
 
   return (
@@ -224,6 +219,26 @@ export default function PlanRevealScreen() {
       </View>
     </SafeAreaView>
   );
+}
+
+async function saveProfile(payload: Record<string, Json>) {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn('Skipping profile cloud save because Supabase is not configured.');
+    return;
+  }
+
+  try {
+    const { error } = await supabase.from('profiles').insert(payload);
+
+    if (error) {
+      console.warn('Unable to save onboarding profile to Supabase.', error);
+    }
+  } catch (error) {
+    console.warn('Unable to save onboarding profile to Supabase.', error);
+  }
 }
 
 function getActivityLevel(gymDaysPerWeek: number): ActivityLevel {

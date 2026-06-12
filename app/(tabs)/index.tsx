@@ -1,14 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -103,7 +107,10 @@ function waterGlasses(row: LooseRow) {
   if (Number.isFinite(count)) return count;
 
   const amountMl = asNumber(row.amount_ml, 0);
-  return Math.round(amountMl / WATER_GLASS_ML);
+  if (amountMl > 0) return Math.round(amountMl / WATER_GLASS_ML);
+
+  const amount = asNumber(row.amount, 0);
+  return amount > 0 ? Math.round(amount / WATER_GLASS_ML) : 0;
 }
 
 function fallbackBrief(score: number, caloriesRemaining: number, taskProgress: string) {
@@ -114,6 +121,7 @@ function fallbackBrief(score: number, caloriesRemaining: number, taskProgress: s
 
 export default function DailyHubScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ reflection?: string }>();
   const insets = useSafeAreaInsets();
   const profile = useUserStore((state) => state.profile);
   const onboardingProfile = useUserStore((state) => state.onboardingProfile);
@@ -130,6 +138,8 @@ export default function DailyHubScreen() {
   const [tasks, setTasks] = useState<LooseRow[]>([]);
   const [waterCount, setWaterCount] = useState(Math.min(WATER_GOAL, Math.round(waterMl / WATER_GLASS_ML)));
   const [brief, setBrief] = useState('Preparing your morning brief...');
+  const [reflectionVisible, setReflectionVisible] = useState(false);
+  const [reflection, setReflection] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
   const name = profile?.name ?? onboardingProfile.goal.split(' ')[0] ?? 'Rama';
@@ -245,6 +255,10 @@ export default function DailyHubScreen() {
     void refreshToday();
   }, [refreshToday]);
 
+  useEffect(() => {
+    if (params.reflection === '1') setReflectionVisible(true);
+  }, [params.reflection]);
+
   const addWater = useCallback(async () => {
     const next = Math.min(WATER_GOAL, waterCount + 1);
     if (next === waterCount) return;
@@ -259,7 +273,6 @@ export default function DailyHubScreen() {
     const payload: LooseRow = {
       date: todayKey(),
       glasses: 1,
-      amount_ml: WATER_GLASS_ML,
     };
 
     if (user?.id) payload.user_id = user.id;
@@ -279,6 +292,7 @@ export default function DailyHubScreen() {
   ];
 
   return (
+    <>
     <ScrollView
       contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.sm }]}
       refreshControl={
@@ -381,6 +395,39 @@ export default function DailyHubScreen() {
         </Text>
       </LifeOSCard>
     </ScrollView>
+
+    <Modal visible={reflectionVisible} animationType="slide" transparent onRequestClose={() => setReflectionVisible(false)}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Evening review</Text>
+            <TouchableOpacity accessibilityRole="button" onPress={() => setReflectionVisible(false)}>
+              <Ionicons name="close" size={22} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.modalPrompt}>How was today?</Text>
+          <TextInput
+            value={reflection}
+            onChangeText={setReflection}
+            multiline
+            placeholder="Energy, food, training, mood..."
+            placeholderTextColor={colors.textMuted}
+            style={styles.reflectionInput}
+          />
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => {
+              setReflection('');
+              setReflectionVisible(false);
+              Alert.alert('Reflection saved', 'Your review is captured for today.');
+            }}
+            style={styles.saveReflectionButton}>
+            <Text style={styles.saveReflectionText}>Save review</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    </>
   );
 }
 
@@ -533,5 +580,53 @@ const styles = StyleSheet.create({
   briefText: {
     ...typography.body,
     color: colors.textSecondary,
+  },
+  modalOverlay: {
+    backgroundColor: 'rgba(0,0,0,0.58)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.surface1,
+    borderTopLeftRadius: radii.card,
+    borderTopRightRadius: radii.card,
+    padding: spacing.md,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  modalTitle: {
+    ...typography.h1,
+    color: colors.textPrimary,
+  },
+  modalPrompt: {
+    ...typography.body,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  reflectionInput: {
+    ...typography.body,
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    color: colors.textPrimary,
+    minHeight: 120,
+    padding: spacing.sm,
+    textAlignVertical: 'top',
+  },
+  saveReflectionButton: {
+    alignItems: 'center',
+    backgroundColor: colors.violetLight,
+    borderRadius: radii.inner,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+  },
+  saveReflectionText: {
+    color: colors.background,
+    fontWeight: '800',
   },
 });
