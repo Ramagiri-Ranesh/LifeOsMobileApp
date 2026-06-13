@@ -179,6 +179,59 @@ async function scheduleRepeatingNotification(params: {
   });
 }
 
+export async function scheduleTaskNotification(params: {
+  taskId?: string;
+  title: string;
+  notes?: string | null;
+  date: string;
+  time: string;
+}) {
+  const notifications = getNotifications();
+  if (!notifications) return false;
+
+  const granted = await requestNotificationPermissions(notifications);
+  if (!granted) return false;
+
+  const { hour, minute } = parseTime(params.time);
+  const [yearRaw, monthRaw, dayRaw] = params.date.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+
+  const triggerAt = new Date(year, month - 1, day, hour, minute);
+  if (triggerAt.getTime() <= Date.now()) return false;
+
+  await notifications.scheduleNotificationAsync({
+    content: {
+      title: `Task time: ${params.title}`,
+      body: params.notes || 'Your task is due now.',
+      data: { route: '/(tabs)', action: 'taskReminder', taskId: params.taskId },
+    },
+    trigger: { type: notifications.SchedulableTriggerInputTypes.DATE, date: triggerAt },
+  });
+
+  return true;
+}
+
+export async function cancelTaskNotification(taskId: string) {
+  const notifications = getNotifications();
+  if (!notifications) return false;
+
+  const scheduled = await notifications.getAllScheduledNotificationsAsync();
+  const taskNotifications = scheduled.filter((notification) => {
+    const data = notification.content.data as { action?: string; taskId?: string };
+    return data.action === 'taskReminder' && data.taskId === taskId;
+  });
+
+  await Promise.all(
+    taskNotifications.map((notification) => notifications.cancelScheduledNotificationAsync(notification.identifier)),
+  );
+
+  return taskNotifications.length > 0;
+}
+
 export async function scheduleLifeOSNotifications() {
   const notifications = getNotifications();
   if (!notifications) return false;

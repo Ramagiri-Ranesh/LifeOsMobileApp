@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing, typography } from '@/lib/design';
 
@@ -8,9 +9,11 @@ type Props = {
   subtitle?: string;
   color?: string;
   tag?: string;
+  completed?: boolean;
+  onToggleComplete?: () => void;
 };
 
-export function TimelineItem({ time, title, subtitle, color = colors.violet, tag }: Props) {
+export function TimelineItem({ time, title, subtitle, color = colors.violet, tag, completed = false, onToggleComplete }: Props) {
   return (
     <View style={styles.row}>
       <Text style={styles.time}>{time}</Text>
@@ -19,14 +22,29 @@ export function TimelineItem({ time, title, subtitle, color = colors.violet, tag
       </View>
       <View style={styles.content}>
         <View style={styles.titleRow}>
-          <Text style={styles.title}>{title}</Text>
+          <View style={styles.titleWrap}>
+            <Text style={[styles.title, completed && styles.completedTitle]}>{title}</Text>
+            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          </View>
           {tag ? (
             <View style={[styles.tag, { borderColor: color }]}>
               <Text style={[styles.tagText, { color }]}>{tag}</Text>
             </View>
           ) : null}
+          {onToggleComplete ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={completed ? 'Mark task incomplete' : 'Mark task complete'}
+              onPress={onToggleComplete}
+              style={[styles.checkButton, completed && { backgroundColor: color, borderColor: color }]}>
+              <Ionicons
+                name={completed ? 'checkmark' : 'ellipse-outline'}
+                size={18}
+                color={completed ? colors.background : color}
+              />
+            </TouchableOpacity>
+          ) : null}
         </View>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
     </View>
   );
@@ -65,11 +83,17 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     justifyContent: 'space-between',
   },
+  titleWrap: {
+    flex: 1,
+  },
   title: {
     ...typography.body,
     color: colors.textPrimary,
-    flex: 1,
     fontWeight: '700',
+  },
+  completedTitle: {
+    color: colors.textSecondary,
+    textDecorationLine: 'line-through',
   },
   subtitle: {
     ...typography.body,
@@ -86,5 +110,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     textTransform: 'uppercase',
+  },
+  checkButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 15,
+    borderWidth: 1,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
   },
 });

@@ -46,6 +46,10 @@ export type Database = {
         Args: { input_username: string; input_password_hash: string };
         Returns: Array<{ profile_id: string }>;
       };
+      set_task_completed: {
+        Args: { input_task_id: string; input_completed: boolean };
+        Returns: Array<Row>;
+      };
     };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;

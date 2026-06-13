@@ -11,6 +11,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -25,6 +26,7 @@ import { TimelineItem } from '@/components/ui/TimelineItem';
 import { calculateGoalScore, calculateLifeScore } from '@/lib/calculations';
 import { getDailyBrief } from '@/lib/ai';
 import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/design';
+import { cancelTaskNotification, scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { syncWaterLog } from '@/lib/waterLog';
 import { useAnalyticsStore } from '@/stores/useAnalyticsStore';
@@ -42,6 +44,8 @@ type PlanItem = {
   subtitle?: string;
   domain: Domain;
   tag: string;
+  kind: 'meal' | 'workout' | 'task';
+  completed?: boolean;
 };
 
 type ActionTile = {
@@ -50,13 +54,59 @@ type ActionTile = {
   onPress: () => void;
 };
 
+type AddTaskForm = {
+  title: string;
+  date: string;
+  time: string;
+  priority: string;
+  notes: string;
+  notify: boolean;
+};
+
 const WATER_GLASS_ML = 250;
+
+const priorityOptions = ['low', 'medium', 'high'];
 
 function todayKey(date = new Date()) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, '0');
   const day = `${date.getDate()}`.padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function nextHourTime() {
+  const date = new Date();
+  date.setHours(date.getHours() + 1, 0, 0, 0);
+  const hour = `${date.getHours()}`.padStart(2, '0');
+  return `${hour}:00`;
+}
+
+function formatTaskTime(time: string) {
+  const [hourRaw, minuteRaw] = time.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return 'Today';
+
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour % 12 || 12;
+  return `${hour12}:${`${minute}`.padStart(2, '0')} ${suffix}`;
+}
+
+function adjustTaskTime(time: string, minutesToAdd: number) {
+  const [hourRaw, minuteRaw] = time.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  const current = (Number.isInteger(hour) ? hour : 9) * 60 + (Number.isInteger(minute) ? minute : 0);
+  const next = (current + minutesToAdd + 24 * 60) % (24 * 60);
+  return `${`${Math.floor(next / 60)}`.padStart(2, '0')}:${`${next % 60}`.padStart(2, '0')}`;
+}
+
+function toggleMeridiem(time: string) {
+  const [hourRaw, minuteRaw] = time.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return '09:00';
+  return `${`${(hour + 12) % 24}`.padStart(2, '0')}:${`${minute}`.padStart(2, '0')}`;
 }
 
 function formatHeaderDate(date = new Date()) {
@@ -92,7 +142,7 @@ function isTaskDone(row: LooseRow) {
 }
 
 function taskTime(row: LooseRow) {
-  return asText(row.due_time) || asText(row.time) || 'Today';
+  return asText(row.time_block) || asText(row.due_time) || asText(row.time) || 'Today';
 }
 
 function taskTitle(row: LooseRow) {
@@ -145,6 +195,16 @@ export default function DailyHubScreen() {
   const [reflectionVisible, setReflectionVisible] = useState(false);
   const [reflection, setReflection] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [taskModalVisible, setTaskModalVisible] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
+  const [taskForm, setTaskForm] = useState<AddTaskForm>({
+    title: '',
+    date: todayKey(),
+    time: nextHourTime(),
+    priority: 'medium',
+    notes: '',
+    notify: false,
+  });
 
   const name = profile?.name || onboardingProfile.name || 'User';
   const caloriesRemaining = Math.max(0, calorieGoal - calories);
@@ -161,6 +221,7 @@ export default function DailyHubScreen() {
       subtitle: `${meal.calories} kcal · ${meal.protein}g protein`,
       domain: 'nutrition' as const,
       tag: 'Meal',
+      kind: 'meal' as const,
     }));
 
     const workoutItem: PlanItem = {
@@ -170,6 +231,7 @@ export default function DailyHubScreen() {
       subtitle: activeSession.length > 0 ? `${activeSession.length} sets completed` : currentSplit,
       domain: 'fitness',
       tag: 'Gym',
+      kind: 'workout',
     };
 
     const taskItems = tasks.map((task, index) => ({
@@ -179,6 +241,8 @@ export default function DailyHubScreen() {
       subtitle: isTaskDone(task) ? 'Completed' : asText(task.notes) || asText(task.description),
       domain: 'goals' as const,
       tag: isTaskDone(task) ? 'Done' : 'Task',
+      kind: 'task' as const,
+      completed: isTaskDone(task),
     }));
 
     return [...mealItems, workoutItem, ...taskItems];
@@ -298,10 +362,115 @@ export default function DailyHubScreen() {
     }
   }, [currentUserId, setWaterMl, waterCount, waterGoalGlasses, waterTargetMl]);
 
+  const openTaskModal = useCallback(() => {
+    setTaskForm({
+      title: '',
+      date: todayKey(),
+      time: nextHourTime(),
+      priority: 'medium',
+      notes: '',
+      notify: false,
+    });
+    setTaskModalVisible(true);
+  }, []);
+
+  const saveTask = useCallback(async () => {
+    const title = taskForm.title.trim();
+    const date = taskForm.date.trim();
+
+    if (!title) {
+      Alert.alert('Task title needed', 'Add a title before saving this task.');
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      Alert.alert('Use YYYY-MM-DD', 'Please enter the task date like 2026-06-13.');
+      return;
+    }
+
+    setSavingTask(true);
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert({
+        title,
+        date,
+        time_block: formatTaskTime(taskForm.time),
+        priority: taskForm.priority,
+        notes: taskForm.notes.trim() || null,
+      })
+      .select('*')
+      .single();
+    setSavingTask(false);
+
+    if (error) {
+      console.warn('Unable to add task', error.message);
+      Alert.alert('Task not saved', error.message);
+      return;
+    }
+
+    if (taskForm.notify) {
+      const scheduled = await scheduleTaskNotification({
+        taskId: asText((data as LooseRow | null)?.id),
+        title,
+        notes: taskForm.notes.trim() || null,
+        date,
+        time: taskForm.time,
+      });
+
+      if (!scheduled) {
+        Alert.alert('Task saved', 'Notification was not scheduled. Pick a future time and allow notifications on your device.');
+      }
+    }
+
+    if (date === todayKey() && data) {
+      setTasks((current) => [...current, data as LooseRow]);
+    }
+    setTaskModalVisible(false);
+    setTaskForm({
+      title: '',
+      date: todayKey(),
+      time: nextHourTime(),
+      priority: 'medium',
+      notes: '',
+      notify: false,
+    });
+    void refreshToday();
+  }, [refreshToday, taskForm]);
+
+  const toggleTaskCompleted = useCallback(async (taskId: string, completed: boolean) => {
+    const previousTasks = tasks;
+    const nextCompleted = !completed;
+    const optimisticTasks = tasks.map((task) =>
+      asText(task.id) === taskId ? { ...task, completed: nextCompleted } : task,
+    );
+
+    setTasks(optimisticTasks);
+
+    const { data, error } = await supabase.rpc('set_task_completed', {
+      input_task_id: taskId,
+      input_completed: nextCompleted,
+    });
+    if (error) {
+      console.warn('Unable to update task', error.message);
+      setTasks(previousTasks);
+      Alert.alert('Task not updated', error.message);
+      return;
+    }
+
+    const updatedTask = (data?.[0] ?? null) as LooseRow | null;
+    if (updatedTask) {
+      setTasks((current) => current.map((task) => (asText(task.id) === taskId ? updatedTask : task)));
+    }
+
+    if (nextCompleted) {
+      await cancelTaskNotification(taskId);
+    }
+  }, [tasks]);
+
   const actions: ActionTile[] = [
     { label: 'Log Meal', icon: 'restaurant-outline', onPress: () => router.push('/(tabs)/nutrition') },
     { label: 'Start Workout', icon: 'barbell-outline', onPress: () => router.push('/(tabs)/gym') },
-    { label: 'Add Task', icon: 'add-circle-outline', onPress: () => router.push('/modal' as never) },
+    { label: 'Add Task', icon: 'add-circle-outline', onPress: openTaskModal },
     { label: 'Log Water', icon: 'water-outline', onPress: addWater },
   ];
 
@@ -348,7 +517,7 @@ export default function DailyHubScreen() {
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Today's Plan</Text>
-        <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/modal' as never)} hitSlop={8}>
+        <TouchableOpacity accessibilityRole="button" onPress={openTaskModal} hitSlop={8}>
           <Text style={styles.addText}>Add +</Text>
         </TouchableOpacity>
       </View>
@@ -362,6 +531,10 @@ export default function DailyHubScreen() {
             subtitle={item.subtitle}
             color={domains[item.domain].color}
             tag={item.tag}
+            completed={item.completed}
+            onToggleComplete={
+              item.kind === 'task' ? () => void toggleTaskCompleted(item.id, item.completed === true) : undefined
+            }
           />
         )}
         scrollEnabled={false}
@@ -437,6 +610,121 @@ export default function DailyHubScreen() {
             }}
             style={styles.saveReflectionButton}>
             <Text style={styles.saveReflectionText}>Save review</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+
+    <Modal visible={taskModalVisible} animationType="slide" transparent onRequestClose={() => setTaskModalVisible(false)}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add task</Text>
+            <TouchableOpacity accessibilityRole="button" onPress={() => setTaskModalVisible(false)}>
+              <Ionicons name="close" size={22} color={colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+
+          <TextInput
+            value={taskForm.title}
+            onChangeText={(title) => setTaskForm((current) => ({ ...current, title }))}
+            placeholder="Task title"
+            placeholderTextColor={colors.textMuted}
+            style={styles.taskInput}
+          />
+
+          <TextInput
+            value={taskForm.date}
+            onChangeText={(date) => setTaskForm((current) => ({ ...current, date }))}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.textMuted}
+            style={styles.taskInput}
+          />
+
+          <View style={styles.timePicker}>
+            <Text style={styles.fieldLabel}>Time</Text>
+            <View style={styles.timePickerRow}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, -60) }))}
+                style={styles.timeButton}>
+                <Ionicons name="remove" size={18} color={colors.textPrimary} />
+              </TouchableOpacity>
+              <Text style={styles.timeValue}>{formatTaskTime(taskForm.time)}</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, 60) }))}
+                style={styles.timeButton}>
+                <Ionicons name="add" size={18} color={colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.timePickerRow}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, -15) }))}
+                style={styles.minuteButton}>
+                <Text style={styles.minuteButtonText}>-15 min</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => setTaskForm((current) => ({ ...current, time: toggleMeridiem(current.time) }))}
+                style={styles.minuteButton}>
+                <Text style={styles.minuteButtonText}>
+                  {taskForm.time.split(':')[0] && Number(taskForm.time.split(':')[0]) >= 12 ? 'PM' : 'AM'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                accessibilityRole="button"
+                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, 15) }))}
+                style={styles.minuteButton}>
+                <Text style={styles.minuteButtonText}>+15 min</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.priorityRow}>
+            {priorityOptions.map((priority) => {
+              const selected = taskForm.priority === priority;
+              return (
+                <TouchableOpacity
+                  key={priority}
+                  accessibilityRole="button"
+                  onPress={() => setTaskForm((current) => ({ ...current, priority }))}
+                  style={[styles.priorityChip, selected && styles.priorityChipSelected]}>
+                  <Text style={[styles.priorityText, selected && styles.priorityTextSelected]}>{priority}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TextInput
+            value={taskForm.notes}
+            onChangeText={(notes) => setTaskForm((current) => ({ ...current, notes }))}
+            multiline
+            placeholder="Notes"
+            placeholderTextColor={colors.textMuted}
+            style={[styles.taskInput, styles.taskNotesInput]}
+          />
+
+          <View style={styles.notifyRow}>
+            <View style={styles.notifyCopy}>
+              <Text style={styles.notifyTitle}>Notify me</Text>
+              <Text style={styles.notifyDetail}>Send a reminder when this task time arrives.</Text>
+            </View>
+            <Switch
+              value={taskForm.notify}
+              onValueChange={(notify) => setTaskForm((current) => ({ ...current, notify }))}
+              thumbColor={taskForm.notify ? colors.violetLight : colors.textMuted}
+              trackColor={{ false: colors.surface2, true: colors.violetBg }}
+            />
+          </View>
+
+          <TouchableOpacity
+            accessibilityRole="button"
+            disabled={savingTask}
+            onPress={saveTask}
+            style={[styles.saveReflectionButton, savingTask && styles.disabledButton]}>
+            <Text style={styles.saveReflectionText}>{savingTask ? 'Saving...' : 'Save task'}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -632,6 +920,125 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     textAlignVertical: 'top',
   },
+  taskInput: {
+    ...typography.body,
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 12,
+  },
+  fieldLabel: {
+    ...typography.labelCaps,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+    textTransform: 'none',
+  },
+  timePicker: {
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    marginBottom: spacing.xs,
+    padding: spacing.sm,
+  },
+  timePickerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'space-between',
+  },
+  timeButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface3,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 44,
+  },
+  timeValue: {
+    color: colors.textPrimary,
+    flex: 1,
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  minuteButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface3,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flex: 1,
+    marginTop: spacing.xs,
+    paddingVertical: 10,
+  },
+  minuteButtonText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  priorityRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  priorityChip: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flex: 1,
+    paddingVertical: spacing.xs,
+  },
+  priorityChipSelected: {
+    backgroundColor: colors.violetBg,
+    borderColor: colors.violetLight,
+  },
+  priorityText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  priorityTextSelected: {
+    color: colors.violetLight,
+  },
+  taskNotesInput: {
+    minHeight: 84,
+    textAlignVertical: 'top',
+  },
+  notifyRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+    padding: spacing.sm,
+  },
+  notifyCopy: {
+    flex: 1,
+  },
+  notifyTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  notifyDetail: {
+    ...typography.labelCaps,
+    color: colors.textSecondary,
+    marginTop: 2,
+    textTransform: 'none',
+  },
   saveReflectionButton: {
     alignItems: 'center',
     backgroundColor: colors.violetLight,
@@ -642,5 +1049,8 @@ const styles = StyleSheet.create({
   saveReflectionText: {
     color: colors.background,
     fontWeight: '800',
+  },
+  disabledButton: {
+    opacity: 0.6,
   },
 });
