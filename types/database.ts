@@ -13,6 +13,7 @@ export type Database = {
   public: {
     Tables: {
       profiles: Table;
+      app_users: Table;
       tasks: Table;
       food_items: Table;
       meal_logs: Table;
@@ -36,7 +37,16 @@ export type Database = {
       ai_coach_messages: Table;
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      app_username_exists: {
+        Args: { input_username: string };
+        Returns: boolean;
+      };
+      verify_app_login: {
+        Args: { input_username: string; input_password_hash: string };
+        Returns: Array<{ profile_id: string }>;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

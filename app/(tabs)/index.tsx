@@ -26,6 +26,7 @@ import { calculateGoalScore, calculateLifeScore } from '@/lib/calculations';
 import { getDailyBrief } from '@/lib/ai';
 import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
+import { syncWaterLog } from '@/lib/waterLog';
 import { useAnalyticsStore } from '@/stores/useAnalyticsStore';
 import { useGymStore } from '@/stores/useGymStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
@@ -138,7 +139,7 @@ export default function DailyHubScreen() {
   const setLifeScore = useAnalyticsStore((state) => state.setLifeScore);
 
   const [tasks, setTasks] = useState<LooseRow[]>([]);
-  const waterGoalGlasses = Math.max(1, Math.round(waterTargetMl / WATER_GLASS_ML));
+  const waterGoalGlasses = Math.max(1, Math.ceil(waterTargetMl / WATER_GLASS_ML));
   const [waterCount, setWaterCount] = useState(Math.min(waterGoalGlasses, Math.round(waterMl / WATER_GLASS_ML)));
   const [brief, setBrief] = useState('Preparing your morning brief...');
   const [reflectionVisible, setReflectionVisible] = useState(false);
@@ -280,15 +281,17 @@ export default function DailyHubScreen() {
     setWaterCount(next);
     setWaterMl(next * WATER_GLASS_ML);
 
-    const payload: LooseRow = {
+    if (!currentUserId) return;
+
+    const payload = {
+      user_id: currentUserId,
       date: todayKey(),
-      glasses: 1,
+      glasses: next,
+      amount_ml: next * WATER_GLASS_ML,
       target_ml: waterTargetMl,
     };
 
-    if (currentUserId) payload.user_id = currentUserId;
-
-    const { error } = await supabase.from('water_log').insert(payload);
+    const { error } = await syncWaterLog(payload);
     if (error) {
       console.warn('Unable to update water log', error.message);
       Alert.alert('Water not synced', 'Your glass was added locally, but Supabase did not update.');

@@ -85,7 +85,7 @@ const defaultOnboardingProfile: OnboardingProfile = {
   foodsAvoided: [],
   firstMealTime: '07:00',
   lastMealTime: '21:00',
-  aiCalcCalories: true,
+  aiCalcCalories: false,
 };
 
 export const useUserStore = create<UserState>()(

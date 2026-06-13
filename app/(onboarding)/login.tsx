@@ -25,32 +25,48 @@ export default function LoginScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const showLoginError = (title: string, message: string) => {
+    setErrorMessage(message);
+    Alert.alert(title, message);
+  };
 
   const handleLogin = async () => {
     const normalizedUsername = normalizeUsername(username);
+    setErrorMessage('');
+
     if (!normalizedUsername || !password) {
-      Alert.alert('Login details required', 'Enter your username and password.');
+      showLoginError('Login details required', 'Enter your username and password.');
       return;
     }
 
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('username', normalizedUsername)
-        .maybeSingle();
+      const { data: authData, error: authError } = await supabase.rpc('verify_app_login', {
+        input_username: normalizedUsername,
+        input_password_hash: hashPassword(normalizedUsername, password),
+      });
 
-      if (error) throw error;
-      const row = data as LooseRow | null;
-      if (!row || row.password_hash !== hashPassword(normalizedUsername, password)) {
-        Alert.alert('Login failed', 'Username or password is incorrect.');
+      if (authError) throw authError;
+      const authRows = (authData ?? []) as LooseRow[];
+      const authUserId = String(authRows[0]?.profile_id ?? '');
+      if (!authUserId) {
+        showLoginError('Login failed', 'Username or password is incorrect.');
         return;
       }
 
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authUserId)
+        .single();
+
+      if (error) throw error;
+      const row = data as LooseRow;
       const restored = profileFromRow(row);
       if (!restored.onboardingCompleted) {
-        Alert.alert('Onboarding incomplete', 'Please finish onboarding for this account.');
+        showLoginError('Onboarding incomplete', 'Please finish onboarding for this account.');
         router.replace('/(onboarding)/basic-profile');
         return;
       }
@@ -62,10 +78,10 @@ export default function LoginScreen() {
       if (restored.generatedPlan) setGeneratedPlan(restored.generatedPlan);
       setCurrentSplit(restored.generatedPlan?.workoutSplit ?? restored.profile.split);
       completeOnboarding();
-      router.replace('/(tabs)');
+      router.replace('/');
     } catch (error) {
       console.warn('Unable to login', error);
-      Alert.alert('Login failed', 'Please check Supabase connection and try again.');
+      showLoginError('Login failed', 'Please check Supabase connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -85,7 +101,10 @@ export default function LoginScreen() {
           <Text style={styles.label}>Username</Text>
           <TextInput
             autoCapitalize="none"
-            onChangeText={setUsername}
+            onChangeText={(value) => {
+              setUsername(value);
+              if (errorMessage) setErrorMessage('');
+            }}
             placeholder="username"
             placeholderTextColor={colors.textMuted}
             style={styles.input}
@@ -94,7 +113,11 @@ export default function LoginScreen() {
 
           <Text style={styles.label}>Password</Text>
           <TextInput
-            onChangeText={setPassword}
+            onChangeText={(value) => {
+              setPassword(value);
+              if (errorMessage) setErrorMessage('');
+            }}
+            onSubmitEditing={handleLogin}
             placeholder="password"
             placeholderTextColor={colors.textMuted}
             secureTextEntry
@@ -102,6 +125,8 @@ export default function LoginScreen() {
             value={password}
           />
         </View>
+
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
         <Pressable accessibilityRole="button" onPress={() => router.replace('/(onboarding)/basic-profile')} hitSlop={8}>
           <Text style={styles.secondaryLink}>Create a new account</Text>
@@ -180,6 +205,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  errorText: {
+    color: colors.rose,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+    marginTop: spacing.sm,
     textAlign: 'center',
   },
   footer: {

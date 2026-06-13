@@ -43,20 +43,6 @@ export default function PlanRevealScreen() {
   const setProfile = useUserStore((state) => state.setProfile);
   const setPlanTargets = useUserStore((state) => state.setPlanTargets);
   const setGeneratedPlan = useUserStore((state) => state.setGeneratedPlan);
-  const [plan, setPlan] = useState<WeekPlan>({
-    workoutSplit: 'PPL schedule',
-    dayPills: defaultDayPills,
-    firstWeekGoals: defaultBullets,
-    calorieTarget: 2380,
-    macros: { protein: 165, carbs: 240, fat: 72 },
-    waterTargetMl: 3000,
-  });
-  const [aiStatus, setAiStatus] = useState('Calculating with AI...');
-  const [isSaving, setIsSaving] = useState(false);
-  const hasGeneratedPlan = useRef(false);
-  const checkScale = useSharedValue(0.4);
-  const checkOpacity = useSharedValue(0);
-
   const activityLevel = useMemo(() => getActivityLevel(draft.gymDaysPerWeek), [draft.gymDaysPerWeek]);
   const fitnessGoal = useMemo(() => getFitnessGoal(draft.goal), [draft.goal]);
   const fallbackCalorieTarget = useMemo(
@@ -71,15 +57,29 @@ export default function PlanRevealScreen() {
     () => Math.round(Math.max(2200, draft.currentWeight * 35) / 250) * 250,
     [draft.currentWeight],
   );
+  const fallbackPlan = useMemo(
+    () =>
+      buildFallbackWeekPlan({
+        gymDaysPerWeek: draft.gymDaysPerWeek,
+        calorieTarget: fallbackCalorieTarget,
+        macros: fallbackMacros,
+        waterTargetMl: fallbackWaterTargetMl,
+      }),
+    [draft.gymDaysPerWeek, fallbackCalorieTarget, fallbackMacros, fallbackWaterTargetMl],
+  );
+  const [plan, setPlan] = useState<WeekPlan>(fallbackPlan);
+  const [aiStatus, setAiStatus] = useState('Calculating with AI...');
+  const [isSaving, setIsSaving] = useState(false);
+  const generatedPlanKey = useRef<string | null>(null);
+  const checkScale = useSharedValue(0.4);
+  const checkOpacity = useSharedValue(0);
   const planCacheKey = useMemo(
     () =>
       JSON.stringify({
         draft,
-        fallbackCalorieTarget,
-        fallbackMacros,
-        fallbackWaterTargetMl,
+        fallbackPlan,
       }),
-    [draft, fallbackCalorieTarget, fallbackMacros, fallbackWaterTargetMl],
+    [draft, fallbackPlan],
   );
 
   const checkStyle = useAnimatedStyle(() => ({
@@ -96,13 +96,21 @@ export default function PlanRevealScreen() {
     let isMounted = true;
 
     const generatePlan = async () => {
-      if (hasGeneratedPlan.current) return;
-      hasGeneratedPlan.current = true;
+      if (generatedPlanKey.current === planCacheKey) return;
+      generatedPlanKey.current = planCacheKey;
 
       const cachedPlan = planCache.get(planCacheKey);
       if (cachedPlan) {
         setPlan(cachedPlan);
-        setAiStatus('AI plan restored from this session.');
+        setAiStatus(draft.aiCalcCalories ? 'AI plan restored from this session.' : 'Plan calculated without AI.');
+        return;
+      }
+
+      setPlan(fallbackPlan);
+
+      if (!draft.aiCalcCalories) {
+        planCache.set(planCacheKey, fallbackPlan);
+        setAiStatus('Plan calculated without AI.');
         return;
       }
 
@@ -111,18 +119,16 @@ export default function PlanRevealScreen() {
           planRequests.get(planCacheKey) ??
           requestGeneratedPlan(planCacheKey, {
             draft,
-            fallbackCalorieTarget,
-            fallbackMacros,
-            fallbackWaterTargetMl,
+            fallbackPlan,
           });
         planRequests.set(planCacheKey, pendingPlan);
         const parsedPlan = await pendingPlan;
         if (isMounted && parsedPlan) {
           setPlan(parsedPlan);
           planCache.set(planCacheKey, parsedPlan);
-          setAiStatus('AI plan generated with Gemini.');
+          setAiStatus('AI plan generated with OpenAI.');
         } else if (isMounted) {
-          setAiStatus('Gemini quota is unavailable, so LifeOS used the safe fallback calculation.');
+          setAiStatus('OpenAI is unavailable, so LifeOS used the safe fallback calculation.');
         }
       } catch (error) {
         console.warn('First-week plan generation unavailable.', error);
@@ -135,7 +141,7 @@ export default function PlanRevealScreen() {
     return () => {
       isMounted = false;
     };
-  }, [draft, fallbackCalorieTarget, fallbackMacros, fallbackWaterTargetMl, planCacheKey]);
+  }, [draft, fallbackPlan, planCacheKey]);
 
   const fullProfile: UserProfile = {
     name: draft.name,
@@ -255,8 +261,9 @@ export default function PlanRevealScreen() {
 }
 
 function getActivityLevel(gymDaysPerWeek: number): ActivityLevel {
-  if (gymDaysPerWeek <= 2) return 'light';
-  if (gymDaysPerWeek <= 4) return 'moderate';
+  if (gymDaysPerWeek <= 1) return 'sedentary';
+  if (gymDaysPerWeek <= 3) return 'light';
+  if (gymDaysPerWeek <= 5) return 'moderate';
   if (gymDaysPerWeek <= 6) return 'active';
   return 'veryActive';
 }
@@ -267,13 +274,63 @@ function getFitnessGoal(goal: string): FitnessGoal {
   return 'maintain';
 }
 
+function buildFallbackWeekPlan(args: {
+  gymDaysPerWeek: number;
+  calorieTarget: number;
+  macros: { protein: number; carbs: number; fat: number };
+  waterTargetMl: number;
+}): WeekPlan {
+  const gymDays = Math.max(1, Math.min(7, Math.round(args.gymDaysPerWeek)));
+  const scheduleByDays: Record<number, { workoutSplit: string; dayPills: string[] }> = {
+    1: {
+      workoutSplit: 'Full Body: Sat',
+      dayPills: ['Rest', 'Mobility', 'Rest', 'Walk', 'Rest', 'Full Body', 'Recovery'],
+    },
+    2: {
+      workoutSplit: 'Full Body: Tue, Sat',
+      dayPills: ['Rest', 'Full Body', 'Walk', 'Rest', 'Mobility', 'Full Body', 'Recovery'],
+    },
+    3: {
+      workoutSplit: 'Full Body: Mon, Wed, Fri',
+      dayPills: ['Full Body', 'Rest', 'Full Body', 'Rest', 'Full Body', 'Walk', 'Recovery'],
+    },
+    4: {
+      workoutSplit: 'Upper/Lower: Mon, Tue, Thu, Sat',
+      dayPills: ['Upper', 'Lower', 'Rest', 'Upper', 'Rest', 'Lower', 'Recovery'],
+    },
+    5: {
+      workoutSplit: 'PPL + Upper/Lower: Mon-Fri',
+      dayPills: ['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Rest', 'Recovery'],
+    },
+    6: {
+      workoutSplit: 'PPL: Push/Pull/Legs twice weekly',
+      dayPills: ['Push', 'Pull', 'Legs', 'Push', 'Pull', 'Legs', 'Recovery'],
+    },
+    7: {
+      workoutSplit: 'Daily training: 5 lifts + 2 recovery days',
+      dayPills: ['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Mobility', 'Recovery'],
+    },
+  };
+  const schedule = scheduleByDays[gymDays] ?? scheduleByDays[3];
+
+  return {
+    ...schedule,
+    firstWeekGoals: defaultBullets,
+    calorieTarget: args.calorieTarget,
+    macros: args.macros,
+    waterTargetMl: args.waterTargetMl,
+  };
+}
+
+function workoutDayCount(dayPills: string[]) {
+  return dayPills.filter((day) => !/(rest|recover|mobility|walk|off)/i.test(day)).length;
+}
+
 async function requestGeneratedPlan(
   cacheKey: string,
   context: {
     draft: ReturnType<typeof useUserStore.getState>['onboardingProfile'];
-    fallbackCalorieTarget: number;
-    fallbackMacros: { protein: number; carbs: number; fat: number };
-    fallbackWaterTargetMl: number;
+    fallbackPlan: WeekPlan;
   },
 ) {
   try {
@@ -281,23 +338,24 @@ async function requestGeneratedPlan(
       [
         'Generate a first-week fitness and nutrition onboarding plan.',
         'Return only JSON with keys calorieTarget, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills as 7 short labels, and firstWeekGoals as exactly 4 concise goals.',
-        'Use metric units. Respect disliked foods and meal timing. If aiCalcCalories is true, calculate calories from the user profile.',
+        `Use these exact calculated nutrition targets: ${context.fallbackPlan.calorieTarget} kcal, protein ${context.fallbackPlan.macros.protein}g, carbs ${context.fallbackPlan.macros.carbs}g, fat ${context.fallbackPlan.macros.fat}g, water ${context.fallbackPlan.waterTargetMl}ml.`,
+        `The workout plan must contain exactly ${context.draft.gymDaysPerWeek} gym days in 7 dayPills. Use rest, walk, mobility, or recovery labels for non-gym days.`,
+        'Respect disliked foods and meal timing. Use metric units.',
       ].join(' '),
       {
+        profile: null,
+        calorieGoal: context.fallbackPlan.calorieTarget,
+        macros: context.fallbackPlan.macros,
+        currentWorkoutSplit: context.fallbackPlan.workoutSplit,
         onboardingProfile: context.draft,
-        fallbackCalorieTarget: context.fallbackCalorieTarget,
-        fallbackMacros: context.fallbackMacros,
-        fallbackWaterTargetMl: context.fallbackWaterTargetMl,
+        calculatedPlan: context.fallbackPlan,
       },
+      { allowOpenAI: true, responseFormat: 'json_object' },
     );
 
     if (!response.trim()) return null;
 
-    const parsedPlan = parseWeekPlan(response, {
-      calorieTarget: context.fallbackCalorieTarget,
-      macros: context.fallbackMacros,
-      waterTargetMl: context.fallbackWaterTargetMl,
-    });
+    const parsedPlan = parseWeekPlan(response, context.fallbackPlan, context.draft.gymDaysPerWeek);
     if (parsedPlan) planCache.set(cacheKey, parsedPlan);
     return parsedPlan;
   } finally {
@@ -307,13 +365,13 @@ async function requestGeneratedPlan(
 
 function parseWeekPlan(
   response: string,
-  fallback: Pick<WeekPlan, 'calorieTarget' | 'macros' | 'waterTargetMl'>,
+  fallback: WeekPlan,
+  gymDaysPerWeek: number,
 ): WeekPlan | null {
   const jsonText = response.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
 
   try {
     const parsed = JSON.parse(jsonText) as Partial<WeekPlan>;
-    const parsedMacros = parsed.macros && typeof parsed.macros === 'object' ? parsed.macros : fallback.macros;
     const firstWeekGoalsSource = Array.isArray(parsed.firstWeekGoals)
       ? parsed.firstWeekGoals
       : Array.isArray((parsed as { bullets?: unknown }).bullets)
@@ -323,18 +381,15 @@ function parseWeekPlan(
     const dayPills = Array.isArray(parsed.dayPills)
       ? parsed.dayPills.filter(Boolean).map(String).slice(0, 7)
       : defaultDayPills;
+    const validDayPills = dayPills.length === 7 && workoutDayCount(dayPills) === Math.round(gymDaysPerWeek);
 
     return {
-      workoutSplit: parsed.workoutSplit ? String(parsed.workoutSplit) : 'PPL schedule',
-      dayPills: dayPills.length === 7 ? dayPills : defaultDayPills,
+      workoutSplit: validDayPills && parsed.workoutSplit ? String(parsed.workoutSplit) : fallback.workoutSplit,
+      dayPills: validDayPills ? dayPills : fallback.dayPills,
       firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
-      calorieTarget: cleanNumber(parsed.calorieTarget, fallback.calorieTarget),
-      macros: {
-        protein: cleanNumber(parsedMacros.protein, fallback.macros.protein),
-        carbs: cleanNumber(parsedMacros.carbs, fallback.macros.carbs),
-        fat: cleanNumber(parsedMacros.fat, fallback.macros.fat),
-      },
-      waterTargetMl: cleanNumber(parsed.waterTargetMl, fallback.waterTargetMl),
+      calorieTarget: fallback.calorieTarget,
+      macros: fallback.macros,
+      waterTargetMl: fallback.waterTargetMl,
     };
   } catch {
     const firstWeekGoals = response
@@ -346,19 +401,14 @@ function parseWeekPlan(
     if (firstWeekGoals.length === 0) return null;
 
     return {
-      workoutSplit: 'PPL schedule',
-      dayPills: defaultDayPills,
+      workoutSplit: fallback.workoutSplit,
+      dayPills: fallback.dayPills,
       firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
       calorieTarget: fallback.calorieTarget,
       macros: fallback.macros,
       waterTargetMl: fallback.waterTargetMl,
     };
   }
-}
-
-function cleanNumber(value: unknown, fallback: number) {
-  const numberValue = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(numberValue) && numberValue > 0 ? Math.round(numberValue) : fallback;
 }
 
 function ProgressDots({ step }: { step: number }) {

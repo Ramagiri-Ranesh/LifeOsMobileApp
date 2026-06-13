@@ -5,13 +5,18 @@ import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
 
 type AIContext = Record<string, unknown>;
+type CallAIOptions = {
+  allowLocalAI?: boolean;
+  allowOpenAI?: boolean;
+  responseFormat?: 'json_object';
+};
 
-const GEMINI_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_MODEL = 'gpt-4o-mini';
 const OLLAMA_URL = 'http://localhost:11434/api/generate';
 
 export function getActiveAIModelLabel() {
-  return process.env.EXPO_PUBLIC_GEMINI_KEY ? 'Gemini 2.0 Flash' : 'Ollama · Llama 3';
+  return process.env.EXPO_PUBLIC_OPENAI_API_KEY || process.env.OPENAI_API_KEY ? 'OpenAI · GPT-4o mini' : 'Ollama · Llama 3';
 }
 
 function buildSystemContext(context?: AIContext) {
@@ -33,36 +38,45 @@ function buildSystemContext(context?: AIContext) {
   };
 }
 
-export async function callAI(prompt: string, context?: AIContext) {
+export async function callAI(prompt: string, context?: AIContext, options?: CallAIOptions) {
   const systemContext = buildSystemContext(context);
-  const geminiKey = process.env.EXPO_PUBLIC_GEMINI_KEY;
+  const openAIKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
   const aiModel = useSettingsStore.getState().aiModel;
 
-  if (aiModel === 'gemini' && geminiKey) {
+  if (options?.allowOpenAI && aiModel !== 'ollama' && openAIKey) {
     try {
-      const response = await fetch(`${GEMINI_URL}?key=${geminiKey}`, {
+      const response = await fetch(OPENAI_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openAIKey}`,
+        },
         body: JSON.stringify({
-          contents: [
+          model: OPENAI_MODEL,
+          ...(options?.responseFormat ? { response_format: { type: options.responseFormat } } : {}),
+          messages: [
             {
-              parts: [
-                {
-                  text: `System context: ${JSON.stringify(systemContext)}\n\nUser prompt: ${prompt}`,
-                },
-              ],
+              role: 'system',
+              content: `You are the LifeOS AI coach. Use this app/user context: ${JSON.stringify(systemContext)}`,
+            },
+            {
+              role: 'user',
+              content: prompt,
             },
           ],
+          temperature: 0.4,
         }),
       });
 
-      if (!response.ok) throw new Error(`Gemini failed: ${response.status}`);
+      if (!response.ok) throw new Error(`OpenAI failed: ${response.status}`);
       const data = await response.json();
-      return data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      return data?.choices?.[0]?.message?.content ?? '';
     } catch (error) {
-      if (__DEV__) console.debug('Gemini unavailable; trying local AI fallback.', error);
+      if (__DEV__) console.debug('OpenAI unavailable; trying local AI fallback.', error);
     }
   }
+
+  if (!options?.allowLocalAI) return '';
 
   try {
     const response = await fetch(OLLAMA_URL, {
@@ -107,7 +121,7 @@ export const getWeeklyReview = (context?: AIContext) =>
   callAI('Write a concise weekly review across nutrition, gym, goals, habits, and learning.', context);
 
 export const getDailyBrief = (context?: AIContext) =>
-  callAI('Create a brief daily command-center summary with the most important next action.', context);
+  callAI('Create one concise daily command-center sentence with the most important next action. Return plain text only, no markdown.', context);
 
 export const getPatternInsight = () =>
   callAI('Identify one pattern from recent meals, workouts, habits, and goals.');

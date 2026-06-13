@@ -25,9 +25,16 @@ function asMacros(value: Json | undefined, fallback: { protein: number; carbs: n
   };
 }
 
+function fitnessGoalSlug(goal?: string) {
+  const normalized = goal?.toLowerCase() ?? '';
+  if (normalized.includes('build muscle') && normalized.includes('lose fat')) return 'build_muscle_lose_fat';
+  if (normalized.includes('build muscle') || normalized.includes('bulk')) return 'build_muscle';
+  if (normalized.includes('lose')) return 'lose_body_fat';
+  return 'stay_fit';
+}
+
 export function buildProfilePayload(args: {
   username: string;
-  passwordHash: string;
   draft: OnboardingProfile;
   profile: UserProfile;
   calorieGoal: number;
@@ -40,7 +47,6 @@ export function buildProfilePayload(args: {
 
   return {
     username: args.username,
-    password_hash: args.passwordHash,
     name: args.profile.name,
     age: args.profile.age,
     height_cm: args.profile.heightCm,
@@ -52,14 +58,20 @@ export function buildProfilePayload(args: {
     currency: args.profile.currency,
     measurements: args.profile.measurements,
     goal: args.profile.goal,
+    fitness_goal: fitnessGoalSlug(args.profile.goal),
     experience_level: args.profile.experienceLevel,
     cuisine_prefs: args.profile.cuisinePrefs,
+    foods_to_avoid: args.profile.foodsAvoided,
     foods_eaten: args.profile.foodsEaten,
     foods_avoided: args.profile.foodsAvoided,
     first_meal_time: args.profile.firstMealTime,
     last_meal_time: args.profile.lastMealTime,
     ai_calc_calories: args.profile.aiCalcCalories,
+    ai_model: 'openai',
     calorie_goal: args.calorieGoal,
+    protein_goal_g: args.macros.protein,
+    carbs_goal_g: args.macros.carbs,
+    fat_goal_g: args.macros.fat,
     macros,
     daily_water_goal_ml: args.profile.waterTargetMl,
     water_target_ml: args.profile.waterTargetMl,

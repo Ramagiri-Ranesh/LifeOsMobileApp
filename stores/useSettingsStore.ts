@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 export type NotificationType = 'morning' | 'lunch' | 'workout' | 'evening' | 'weekly' | 'aiAlerts';
-export type AIModel = 'gemini' | 'ollama';
+export type AIModel = 'openai' | 'ollama';
 
 export type QuietHours = {
   enabled: boolean;
@@ -55,7 +55,7 @@ export const useSettingsStore = create<SettingsState>()(
         evening: '21:30',
         weekly: '20:00',
       },
-      aiModel: 'gemini',
+      aiModel: 'openai',
       appLockEnabled: false,
       setNotificationEnabled: (type, enabled) =>
         set((state) => ({ notifications: { ...state.notifications, [type]: enabled } })),

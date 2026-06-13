@@ -8,6 +8,7 @@ import { hashPassword, normalizeUsername } from '@/lib/password';
 import { buildProfilePayload } from '@/lib/profile';
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
+import { syncWaterLog } from '@/lib/waterLog';
 import { useGymStore } from '@/stores/useGymStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
 import { useUserStore } from '@/stores/useUserStore';
@@ -59,12 +60,11 @@ export default function RegisterScreen() {
     setSaving(true);
     try {
       const passwordHash = hashPassword(normalizedUsername, password);
-      const { data: existing } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', normalizedUsername)
-        .maybeSingle();
+      const { data: existing, error: existingError } = await supabase.rpc('app_username_exists', {
+        input_username: normalizedUsername,
+      });
 
+      if (existingError) throw existingError;
       if (existing) {
         Alert.alert('Username taken', 'Choose another username or login.');
         return;
@@ -72,7 +72,6 @@ export default function RegisterScreen() {
 
       const payload = buildProfilePayload({
         username: normalizedUsername,
-        passwordHash,
         draft,
         profile,
         calorieGoal,
@@ -83,6 +82,13 @@ export default function RegisterScreen() {
       if (error) throw error;
 
       const savedId = String((data as LooseRow).id ?? '');
+      const { error: userError } = await supabase.from('app_users').insert({
+        username: normalizedUsername,
+        password_hash: passwordHash,
+        profile_id: savedId,
+      });
+      if (userError) throw userError;
+
       const savedProfile = { ...profile, id: savedId, username: normalizedUsername };
       setSession({ userId: savedId, username: normalizedUsername });
       setProfile(savedProfile);
@@ -90,13 +96,14 @@ export default function RegisterScreen() {
       setWaterMl(generatedPlan.waterTargetMl);
       setCurrentSplit(generatedPlan.workoutSplit);
 
-      await supabase.from('water_log').insert({
+      const { error: waterError } = await syncWaterLog({
         user_id: savedId,
         date: todayKey(),
         target_ml: generatedPlan.waterTargetMl,
         amount_ml: 0,
         glasses: 0,
       });
+      if (waterError) console.warn('Unable to initialize water log', waterError.message);
 
       router.replace('/(tabs)');
     } catch (error) {

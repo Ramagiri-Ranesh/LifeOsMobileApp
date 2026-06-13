@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   Alert,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -18,6 +20,7 @@ import { LifeOSCard } from '@/components/ui/LifeOSCard';
 import { exportSettingsBackup, scheduleLifeOSNotifications } from '@/lib/notifications';
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { type AIModel, type NotificationType, useSettingsStore } from '@/stores/useSettingsStore';
+import { useUserStore } from '@/stores/useUserStore';
 
 const NOTIFICATION_ROWS: { key: NotificationType; title: string; detail: string }[] = [
   { key: 'morning', title: 'Morning brief', detail: '7 AM Daily Hub prompt with AI insight' },
@@ -52,6 +55,7 @@ export default function SettingsScreen() {
   const setNotificationTime = useSettingsStore((state) => state.setNotificationTime);
   const setAIModel = useSettingsStore((state) => state.setAIModel);
   const setAppLockEnabled = useSettingsStore((state) => state.setAppLockEnabled);
+  const resetAuth = useUserStore((state) => state.resetAuth);
 
   const [backupVisible, setBackupVisible] = useState(false);
   const [backupJson, setBackupJson] = useState('');
@@ -99,6 +103,29 @@ export default function SettingsScreen() {
   const showBackup = () => {
     setBackupJson(exportSettingsBackup());
     setBackupVisible(true);
+  };
+
+  const performLogout = () => {
+    resetAuth();
+    router.replace('/(onboarding)/login');
+  };
+
+  const logout = () => {
+    if (Platform.OS === 'web') {
+      if (window.confirm('Logout? You will need to login again to open your dashboard.')) {
+        performLogout();
+      }
+      return;
+    }
+
+    Alert.alert('Logout', 'You will need to login again to open your dashboard.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: performLogout,
+      },
+    ]);
   };
 
   return (
@@ -188,8 +215,8 @@ export default function SettingsScreen() {
         <LifeOSCard>
           <Text style={styles.sectionTitle}>AI Model</Text>
           <View style={styles.segment}>
-            {(['gemini', 'ollama'] as AIModel[]).map((model) => {
-              const active = aiModel === model;
+            {(['openai', 'ollama'] as AIModel[]).map((model) => {
+              const active = model === 'openai' ? aiModel !== 'ollama' : aiModel === model;
               return (
                 <TouchableOpacity
                   key={model}
@@ -220,6 +247,10 @@ export default function SettingsScreen() {
           <TouchableOpacity accessibilityRole="button" onPress={showBackup} style={styles.secondaryButton}>
             <Ionicons name="document-text-outline" color={colors.textPrimary} size={18} />
             <Text style={styles.secondaryText}>Backup settings JSON</Text>
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="button" onPress={logout} style={styles.logoutButton}>
+            <Ionicons name="log-out-outline" color={colors.rose} size={18} />
+            <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </LifeOSCard>
       </ScrollView>
@@ -316,6 +347,19 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   secondaryText: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
+  logoutButton: {
+    alignItems: 'center',
+    backgroundColor: colors.roseBg,
+    borderColor: colors.rose,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    padding: spacing.md,
+  },
+  logoutText: { ...typography.body, color: colors.rose, fontWeight: '800' },
   segment: { backgroundColor: colors.surface2, borderRadius: radii.inner, flexDirection: 'row', padding: 4 },
   segmentButton: { alignItems: 'center', borderRadius: radii.inner, flex: 1, padding: spacing.sm },
   segmentActive: { backgroundColor: colors.violetBg },
