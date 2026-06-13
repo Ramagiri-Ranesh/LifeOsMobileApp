@@ -74,6 +74,14 @@ function todayKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function timeOfDay(date = new Date()) {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 12) return { greeting: 'Good morning', briefTitle: 'Good morning brief' };
+  if (hour >= 12 && hour < 17) return { greeting: 'Good afternoon', briefTitle: 'Good afternoon brief' };
+  if (hour >= 17 && hour < 21) return { greeting: 'Good evening', briefTitle: 'Good evening brief' };
+  return { greeting: 'Good night', briefTitle: 'Good night brief' };
+}
+
 function nextHourTime() {
   const date = new Date();
   date.setHours(date.getHours() + 1, 0, 0, 0);
@@ -189,9 +197,10 @@ export default function DailyHubScreen() {
   const setLifeScore = useAnalyticsStore((state) => state.setLifeScore);
 
   const [tasks, setTasks] = useState<LooseRow[]>([]);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const waterGoalGlasses = Math.max(1, Math.ceil(waterTargetMl / WATER_GLASS_ML));
   const [waterCount, setWaterCount] = useState(Math.min(waterGoalGlasses, Math.round(waterMl / WATER_GLASS_ML)));
-  const [brief, setBrief] = useState('Preparing your morning brief...');
+  const [brief, setBrief] = useState(() => `Preparing your ${timeOfDay().briefTitle.toLowerCase()}...`);
   const [reflectionVisible, setReflectionVisible] = useState(false);
   const [reflection, setReflection] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -207,6 +216,7 @@ export default function DailyHubScreen() {
   });
 
   const name = profile?.name || onboardingProfile.name || 'User';
+  const dayPeriod = useMemo(() => timeOfDay(currentTime), [currentTime]);
   const caloriesRemaining = Math.max(0, calorieGoal - calories);
   const completedTasks = tasks.filter(isTaskDone).length;
   const taskTotal = tasks.length;
@@ -293,6 +303,7 @@ export default function DailyHubScreen() {
     try {
       const insight = await getDailyBrief({
         date,
+        timeOfDay: dayPeriod.greeting,
         lifeScore: score,
         caloriesRemaining,
         waterGlasses: nextWater,
@@ -311,6 +322,7 @@ export default function DailyHubScreen() {
     calories,
     caloriesRemaining,
     currentSplit,
+    dayPeriod.greeting,
     currentUserId,
     onboardingCompleted,
     profile,
@@ -335,13 +347,19 @@ export default function DailyHubScreen() {
   }, [refreshToday]);
 
   useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (params.reflection === '1') setReflectionVisible(true);
   }, [params.reflection]);
 
-  const addWater = useCallback(async () => {
-    const next = Math.min(waterGoalGlasses, waterCount + 1);
+  const setWaterGlasses = useCallback(async (nextCount: number) => {
+    const next = Math.min(waterGoalGlasses, Math.max(0, nextCount));
     if (next === waterCount) return;
 
+    const previous = waterCount;
     setWaterCount(next);
     setWaterMl(next * WATER_GLASS_ML);
 
@@ -358,9 +376,15 @@ export default function DailyHubScreen() {
     const { error } = await syncWaterLog(payload);
     if (error) {
       console.warn('Unable to update water log', error.message);
+      setWaterCount(previous);
+      setWaterMl(previous * WATER_GLASS_ML);
       Alert.alert('Water not synced', 'Your glass was added locally, but Supabase did not update.');
     }
   }, [currentUserId, setWaterMl, waterCount, waterGoalGlasses, waterTargetMl]);
+
+  const addWater = useCallback(async () => {
+    await setWaterGlasses(waterCount + 1);
+  }, [setWaterGlasses, waterCount]);
 
   const openTaskModal = useCallback(() => {
     setTaskForm({
@@ -484,7 +508,7 @@ export default function DailyHubScreen() {
       showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Good morning 👋</Text>
+          <Text style={styles.greeting}>{dayPeriod.greeting} 👋</Text>
           <Text style={styles.name}>{name}</Text>
         </View>
         <View style={styles.headerRight}>
@@ -561,12 +585,18 @@ export default function DailyHubScreen() {
           {Array.from({ length: waterGoalGlasses }).map((_, index) => {
             const filled = index < waterCount;
             return (
-              <Ionicons
+              <TouchableOpacity
                 key={index}
-                name={filled ? 'water' : 'water-outline'}
-                size={24}
-                color={filled ? colors.emerald : colors.textMuted}
-              />
+                accessibilityRole="button"
+                accessibilityLabel={`Set hydration to ${index + 1} glasses`}
+                onPress={() => void setWaterGlasses(index + 1)}
+                style={styles.dropletButton}>
+                <Ionicons
+                  name={filled ? 'water' : 'water-outline'}
+                  size={24}
+                  color={filled ? colors.emerald : colors.textMuted}
+                />
+              </TouchableOpacity>
             );
           })}
         </View>
@@ -575,7 +605,7 @@ export default function DailyHubScreen() {
       <LifeOSCard accentColor={colors.violet} style={styles.briefCard}>
         <View style={styles.briefHeader}>
           <Ionicons name="sparkles" size={20} color={colors.violetLight} />
-          <Text style={styles.cardTitle}>Good morning brief</Text>
+          <Text style={styles.cardTitle}>{dayPeriod.briefTitle}</Text>
         </View>
         <Text numberOfLines={2} style={styles.briefText}>
           {brief}
@@ -869,6 +899,12 @@ const styles = StyleSheet.create({
   dropletRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  dropletButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+    minWidth: 32,
   },
   briefCard: {
     gap: spacing.xs,
