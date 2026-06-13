@@ -183,6 +183,7 @@ async function loadRecentContext(
   weeklyGoals: ReturnType<typeof useGoalsStore.getState>['weeklyGoals'],
   habits: ReturnType<typeof useHabitsStore.getState>['habits'],
   gymStreak: number,
+  currentUserId: string | null,
 ): Promise<CoachContext> {
   const since = new Date();
   since.setDate(since.getDate() - 6);
@@ -195,11 +196,14 @@ async function loadRecentContext(
         .select('*, meal_log_items(*, food_items(*))')
         .gte('date', sinceDate)
         .order('date', { ascending: false }),
-      supabase
-        .from('workout_sessions')
-        .select('*, workout_sets(*)')
-        .order('started_at', { ascending: false })
-        .limit(5),
+      currentUserId
+        ? supabase
+            .from('workout_sessions')
+            .select('*, workout_sets(*)')
+            .eq('user_id', currentUserId)
+            .order('started_at', { ascending: false })
+            .limit(5)
+        : supabase.from('workout_sessions').select('*').limit(0),
       supabase.from('weekly_goals').select('*').limit(20),
       supabase.from('life_scores').select('*').order('created_at', { ascending: false }).limit(10),
     ]);
@@ -259,7 +263,7 @@ export default function AICoachScreen() {
   const { activeSession, currentSplit, streak: gymStreak } = useGymStore();
   const { weeklyGoals } = useGoalsStore();
   const { habits } = useHabitsStore();
-  const { macros } = useUserStore();
+  const { currentUserId, macros } = useUserStore();
 
   const [input, setInput] = useState('');
   const [selectedChips, setSelectedChips] = useState<string[]>([]);
@@ -308,7 +312,7 @@ export default function AICoachScreen() {
     let cancelled = false;
 
     async function loadInsights() {
-      const nextContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, habits, gymStreak);
+      const nextContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, habits, gymStreak, currentUserId);
       if (cancelled) return;
 
       let pattern = "You're 40% more focused on gym days. Keep workouts near high-focus tasks.";
@@ -353,7 +357,7 @@ export default function AICoachScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeSession, currentSplit, gymStreak, habits, macros.protein, todaysMeals, weeklyGoals]);
+  }, [activeSession, currentSplit, currentUserId, gymStreak, habits, macros.protein, todaysMeals, weeklyGoals]);
 
   const toggleChip = (chip: string) => {
     setSelectedChips((current) => (current.includes(chip) ? current.filter((item) => item !== chip) : [...current, chip]));
@@ -381,7 +385,7 @@ export default function AICoachScreen() {
     setIsProcessing(true);
 
     try {
-      const freshContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, habits, gymStreak);
+      const freshContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, habits, gymStreak, currentUserId);
       const response = await callAI(trimmed, {
         ...freshContext,
         last7DaysMeals: freshContext.recentMeals,

@@ -5,6 +5,20 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 export type GeneratedPlan = {
   workoutSplit: string;
   dayPills: string[];
+  weeklyWorkouts?: Array<{
+    dayIndex: number;
+    label: string;
+    templateName: string;
+    muscleGroups: string[];
+    isRestDay?: boolean;
+    exercises: Array<{
+      name: string;
+      muscleGroup: string;
+      targetSets: number;
+      reps?: number;
+      weightKg?: number;
+    }>;
+  }>;
   firstWeekGoals: string[];
   waterTargetMl: number;
 };
@@ -13,6 +27,7 @@ export type UserProfile = {
   id?: string;
   username?: string;
   name: string;
+  gender: 'male' | 'female';
   age: number;
   heightCm: number;
   weightKg: number;
@@ -34,6 +49,7 @@ export type UserProfile = {
 
 export type OnboardingProfile = {
   name: string;
+  gender: 'male' | 'female';
   age: number;
   heightCm: number;
   goal: string;
@@ -73,6 +89,7 @@ type UserState = {
 
 const defaultOnboardingProfile: OnboardingProfile = {
   name: '',
+  gender: 'male',
   age: 29,
   heightCm: 175,
   goal: 'Build muscle & lose fat',

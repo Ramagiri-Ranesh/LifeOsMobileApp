@@ -28,6 +28,7 @@ const defaultDayPills = ['Push', 'Pull', 'Legs', 'Rest', 'Push', 'Pull', 'Rest']
 type WeekPlan = {
   workoutSplit: string;
   dayPills: string[];
+  weeklyWorkouts: NonNullable<GeneratedPlan['weeklyWorkouts']>;
   firstWeekGoals: string[];
   calorieTarget: number;
   macros: { protein: number; carbs: number; fat: number };
@@ -46,8 +47,8 @@ export default function PlanRevealScreen() {
   const activityLevel = useMemo(() => getActivityLevel(draft.gymDaysPerWeek), [draft.gymDaysPerWeek]);
   const fitnessGoal = useMemo(() => getFitnessGoal(draft.goal), [draft.goal]);
   const fallbackCalorieTarget = useMemo(
-    () => calculateTDEE(draft.currentWeight, draft.heightCm, draft.age, activityLevel),
-    [activityLevel, draft.age, draft.currentWeight, draft.heightCm],
+    () => calculateTDEE(draft.currentWeight, draft.heightCm, draft.age, activityLevel, draft.gender),
+    [activityLevel, draft.age, draft.currentWeight, draft.gender, draft.heightCm],
   );
   const fallbackMacros = useMemo(
     () => calculateMacros(fallbackCalorieTarget, fitnessGoal),
@@ -145,6 +146,7 @@ export default function PlanRevealScreen() {
 
   const fullProfile: UserProfile = {
     name: draft.name,
+    gender: draft.gender,
     age: draft.age,
     heightCm: draft.heightCm,
     weightKg: draft.currentWeight,
@@ -171,6 +173,7 @@ export default function PlanRevealScreen() {
     const generatedPlan: GeneratedPlan = {
       workoutSplit: plan.workoutSplit,
       dayPills: plan.dayPills,
+      weeklyWorkouts: plan.weeklyWorkouts,
       firstWeekGoals: plan.firstWeekGoals,
       waterTargetMl: plan.waterTargetMl,
     };
@@ -315,11 +318,74 @@ function buildFallbackWeekPlan(args: {
 
   return {
     ...schedule,
+    weeklyWorkouts: buildFallbackWeeklyWorkouts(schedule.dayPills),
     firstWeekGoals: defaultBullets,
     calorieTarget: args.calorieTarget,
     macros: args.macros,
     waterTargetMl: args.waterTargetMl,
   };
+}
+
+function isRestWorkout(label: string) {
+  return /(rest|recover|recovery|mobility|walk|off)/i.test(label);
+}
+
+function fallbackExercises(label: string) {
+  const key = label.toLowerCase();
+  if (isRestWorkout(label)) return [];
+  if (key.includes('push')) {
+    return [
+      { name: 'Bench Press', muscleGroup: 'chest', targetSets: 4, reps: 8 },
+      { name: 'Incline Press', muscleGroup: 'chest', targetSets: 3, reps: 10 },
+      { name: 'Shoulder Press', muscleGroup: 'shoulders', targetSets: 3, reps: 8 },
+      { name: 'Triceps Pushdown', muscleGroup: 'triceps', targetSets: 3, reps: 12 },
+    ];
+  }
+  if (key.includes('pull')) {
+    return [
+      { name: 'Lat Pulldown', muscleGroup: 'back', targetSets: 4, reps: 10 },
+      { name: 'Row', muscleGroup: 'back', targetSets: 3, reps: 8 },
+      { name: 'Face Pull', muscleGroup: 'shoulders', targetSets: 3, reps: 12 },
+      { name: 'Biceps Curl', muscleGroup: 'biceps', targetSets: 3, reps: 12 },
+    ];
+  }
+  if (key.includes('leg') || key.includes('lower')) {
+    return [
+      { name: 'Squat', muscleGroup: 'quads', targetSets: 4, reps: 6 },
+      { name: 'Romanian Deadlift', muscleGroup: 'hamstrings', targetSets: 3, reps: 8 },
+      { name: 'Leg Press', muscleGroup: 'quads', targetSets: 3, reps: 10 },
+      { name: 'Calf Raise', muscleGroup: 'calves', targetSets: 4, reps: 14 },
+    ];
+  }
+  if (key.includes('upper')) {
+    return [
+      { name: 'Bench Press', muscleGroup: 'chest', targetSets: 3, reps: 8 },
+      { name: 'Row', muscleGroup: 'back', targetSets: 3, reps: 8 },
+      { name: 'Shoulder Press', muscleGroup: 'shoulders', targetSets: 3, reps: 10 },
+      { name: 'Biceps Curl', muscleGroup: 'biceps', targetSets: 2, reps: 12 },
+      { name: 'Triceps Pushdown', muscleGroup: 'triceps', targetSets: 2, reps: 12 },
+    ];
+  }
+  return [
+    { name: 'Squat', muscleGroup: 'quads', targetSets: 3, reps: 6 },
+    { name: 'Bench Press', muscleGroup: 'chest', targetSets: 3, reps: 8 },
+    { name: 'Row', muscleGroup: 'back', targetSets: 3, reps: 8 },
+    { name: 'Plank', muscleGroup: 'core', targetSets: 3, reps: 45 },
+  ];
+}
+
+function buildFallbackWeeklyWorkouts(dayPills: string[]): NonNullable<GeneratedPlan['weeklyWorkouts']> {
+  return dayPills.map((label, dayIndex) => {
+    const exercises = fallbackExercises(label);
+    return {
+      dayIndex,
+      label,
+      templateName: isRestWorkout(label) ? `${label} Day` : `${label} Workout`,
+      muscleGroups: Array.from(new Set(exercises.map((exercise) => exercise.muscleGroup))),
+      isRestDay: exercises.length === 0,
+      exercises,
+    };
+  });
 }
 
 function workoutDayCount(dayPills: string[]) {
@@ -337,7 +403,8 @@ async function requestGeneratedPlan(
     const response = await callAI(
       [
         'Generate a first-week fitness and nutrition onboarding plan.',
-        'Return only JSON with keys calorieTarget, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills as 7 short labels, and firstWeekGoals as exactly 4 concise goals.',
+        'Return only JSON with keys calorieTarget, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills as 7 short labels, weeklyWorkouts, and firstWeekGoals as exactly 4 concise goals.',
+        'weeklyWorkouts must be an array of 7 objects: dayIndex 0-6 where 0 is Monday, label, templateName, muscleGroups, isRestDay, and exercises. Each exercise needs name, muscleGroup, targetSets, reps, and optional weightKg.',
         `Use these exact calculated nutrition targets: ${context.fallbackPlan.calorieTarget} kcal, protein ${context.fallbackPlan.macros.protein}g, carbs ${context.fallbackPlan.macros.carbs}g, fat ${context.fallbackPlan.macros.fat}g, water ${context.fallbackPlan.waterTargetMl}ml.`,
         `The workout plan must contain exactly ${context.draft.gymDaysPerWeek} gym days in 7 dayPills. Use rest, walk, mobility, or recovery labels for non-gym days.`,
         'Respect disliked foods and meal timing. Use metric units.',
@@ -382,10 +449,12 @@ function parseWeekPlan(
       ? parsed.dayPills.filter(Boolean).map(String).slice(0, 7)
       : defaultDayPills;
     const validDayPills = dayPills.length === 7 && workoutDayCount(dayPills) === Math.round(gymDaysPerWeek);
+    const weeklyWorkouts = parseWeeklyWorkouts((parsed as Partial<WeekPlan>).weeklyWorkouts, validDayPills ? dayPills : fallback.dayPills);
 
     return {
       workoutSplit: validDayPills && parsed.workoutSplit ? String(parsed.workoutSplit) : fallback.workoutSplit,
       dayPills: validDayPills ? dayPills : fallback.dayPills,
+      weeklyWorkouts,
       firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
       calorieTarget: fallback.calorieTarget,
       macros: fallback.macros,
@@ -403,12 +472,45 @@ function parseWeekPlan(
     return {
       workoutSplit: fallback.workoutSplit,
       dayPills: fallback.dayPills,
+      weeklyWorkouts: fallback.weeklyWorkouts,
       firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
       calorieTarget: fallback.calorieTarget,
       macros: fallback.macros,
       waterTargetMl: fallback.waterTargetMl,
     };
   }
+}
+
+function parseWeeklyWorkouts(value: unknown, dayPills: string[]): NonNullable<GeneratedPlan['weeklyWorkouts']> {
+  if (!Array.isArray(value)) return buildFallbackWeeklyWorkouts(dayPills);
+
+  const parsed = value.slice(0, 7).map((item, fallbackIndex) => {
+    const row = item && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {};
+    const label = String(row.label || dayPills[fallbackIndex] || 'Workout');
+    const rawExercises = Array.isArray(row.exercises) ? row.exercises : [];
+    const exercises = rawExercises
+      .filter((exercise): exercise is Record<string, unknown> => Boolean(exercise) && typeof exercise === 'object' && !Array.isArray(exercise))
+      .map((exercise) => ({
+        name: String(exercise.name || 'Exercise'),
+        muscleGroup: String(exercise.muscleGroup || exercise.muscle_group || 'chest'),
+        targetSets: Math.max(1, Math.round(Number(exercise.targetSets || exercise.target_sets || 3))),
+        reps: Math.max(1, Math.round(Number(exercise.reps || 8))),
+        weightKg: Math.max(0, Number(exercise.weightKg || exercise.weight_kg || 0)),
+      }));
+
+    return {
+      dayIndex: Math.max(0, Math.min(6, Math.round(Number(row.dayIndex ?? row.day_index ?? fallbackIndex)))),
+      label,
+      templateName: String(row.templateName || row.template_name || (isRestWorkout(label) ? `${label} Day` : `${label} Workout`)),
+      muscleGroups: Array.isArray(row.muscleGroups)
+        ? row.muscleGroups.filter(Boolean).map(String)
+        : Array.from(new Set(exercises.map((exercise) => exercise.muscleGroup))),
+      isRestDay: row.isRestDay === true || row.is_rest_day === true || exercises.length === 0 || isRestWorkout(label),
+      exercises,
+    };
+  });
+
+  return parsed.length === 7 ? parsed : buildFallbackWeeklyWorkouts(dayPills);
 }
 
 function ProgressDots({ step }: { step: number }) {

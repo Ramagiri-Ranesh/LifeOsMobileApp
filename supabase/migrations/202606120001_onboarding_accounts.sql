@@ -5,6 +5,7 @@ create table if not exists public.profiles (
   username text unique,
   password_hash text,
   name text,
+  gender text,
   age integer,
   height_cm integer,
   weight_kg numeric,
@@ -36,6 +37,7 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists username text;
 alter table public.profiles add column if not exists password_hash text;
 alter table public.profiles add column if not exists name text;
+alter table public.profiles add column if not exists gender text;
 alter table public.profiles add column if not exists age integer;
 alter table public.profiles add column if not exists height_cm integer;
 alter table public.profiles add column if not exists weight_kg numeric;

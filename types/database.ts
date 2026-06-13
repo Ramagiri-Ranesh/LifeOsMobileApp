@@ -24,6 +24,7 @@ export type Database = {
       workout_sets: Table;
       body_metrics: Table;
       water_log: Table;
+      goal_categories: Table;
       weekly_goals: Table;
       monthly_goals: Table;
       habits: Table;

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import type { ComponentProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -29,6 +29,8 @@ import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/
 import { cancelTaskNotification, scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { syncWaterLog } from '@/lib/waterLog';
+import { ensureTodayWorkoutTask, isWorkoutTask } from '@/lib/workoutTasks';
+import { buildTodaysWorkoutTemplate } from '@/lib/workoutPlan';
 import { useAnalyticsStore } from '@/stores/useAnalyticsStore';
 import { useGymStore } from '@/stores/useGymStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
@@ -157,6 +159,28 @@ function taskTitle(row: LooseRow) {
   return asText(row.title) || asText(row.name) || asText(row.task) || 'Untitled task';
 }
 
+function dedupeTasks(rows: LooseRow[]) {
+  const order: string[] = [];
+  const byKey = new Map<string, LooseRow>();
+
+  rows.forEach((row, index) => {
+    const key = isWorkoutTask(row)
+      ? `workout:${asText(row.user_id)}:${rowDate(row)}:${taskTitle(row).toLowerCase()}`
+      : asText(row.id, `task-${index}`);
+    const existing = byKey.get(key);
+    if (!existing) {
+      order.push(key);
+      byKey.set(key, row);
+      return;
+    }
+    if (!isTaskDone(existing) && isTaskDone(row)) {
+      byKey.set(key, row);
+    }
+  });
+
+  return order.map((key) => byKey.get(key)).filter((row): row is LooseRow => Boolean(row));
+}
+
 function waterGlasses(row: LooseRow) {
   const direct = asNumber(row.glasses, NaN);
   if (Number.isFinite(direct)) return direct;
@@ -185,6 +209,7 @@ export default function DailyHubScreen() {
   const currentUserId = useUserStore((state) => state.currentUserId);
   const onboardingCompleted = useUserStore((state) => state.onboardingCompleted);
   const onboardingProfile = useUserStore((state) => state.onboardingProfile);
+  const generatedPlan = useUserStore((state) => state.generatedPlan);
   const calorieGoal = useUserStore((state) => state.calorieGoal);
   const waterTargetMl = useUserStore((state) => state.waterTargetMl);
   const todaysMeals = useNutritionStore((state) => state.todaysMeals);
@@ -192,7 +217,6 @@ export default function DailyHubScreen() {
   const waterMl = useNutritionStore((state) => state.waterMl);
   const setWaterMl = useNutritionStore((state) => state.setWaterMl);
   const activeSession = useGymStore((state) => state.activeSession);
-  const currentSplit = useGymStore((state) => state.currentSplit);
   const lifeScore = useAnalyticsStore((state) => state.lifeScore);
   const setLifeScore = useAnalyticsStore((state) => state.setLifeScore);
 
@@ -221,7 +245,15 @@ export default function DailyHubScreen() {
   const completedTasks = tasks.filter(isTaskDone).length;
   const taskTotal = tasks.length;
   const taskProgress = `${completedTasks}/${taskTotal}`;
-  const workoutLabel = activeSession.length > 0 ? `${activeSession.length} sets logged` : 'Workout planned';
+  const todaysWorkout = useMemo(() => buildTodaysWorkoutTemplate(generatedPlan, profile), [generatedPlan, profile]);
+  const workoutTask = useMemo(() => tasks.find(isWorkoutTask) ?? null, [tasks]);
+  const workoutLabel = activeSession.length > 0
+    ? `${activeSession.length} sets logged`
+    : todaysWorkout.isRestDay
+      ? 'Recovery day'
+      : workoutTask && isTaskDone(workoutTask)
+        ? 'Workout done'
+        : `${todaysWorkout.name} planned`;
 
   const planItems = useMemo<PlanItem[]>(() => {
     const mealItems = todaysMeals.map((meal, index) => ({
@@ -234,29 +266,23 @@ export default function DailyHubScreen() {
       kind: 'meal' as const,
     }));
 
-    const workoutItem: PlanItem = {
-      id: 'workout-today',
-      time: '18:30',
-      title: activeSession.length > 0 ? 'Workout in progress' : currentSplit.split(':')[0] || 'Today workout',
-      subtitle: activeSession.length > 0 ? `${activeSession.length} sets completed` : currentSplit,
-      domain: 'fitness',
-      tag: 'Gym',
-      kind: 'workout',
-    };
-
     const taskItems = tasks.map((task, index) => ({
       id: asText(task.id, `task-${index}`),
       time: taskTime(task),
       title: taskTitle(task),
-      subtitle: isTaskDone(task) ? 'Completed' : asText(task.notes) || asText(task.description),
-      domain: 'goals' as const,
-      tag: isTaskDone(task) ? 'Done' : 'Task',
+      subtitle: isTaskDone(task)
+        ? 'Completed'
+        : isWorkoutTask(task) && activeSession.length > 0
+          ? `${activeSession.length} sets completed`
+          : asText(task.notes) || asText(task.description),
+      domain: isWorkoutTask(task) ? 'fitness' as const : 'goals' as const,
+      tag: isTaskDone(task) ? 'Done' : isWorkoutTask(task) ? 'Gym' : 'Task',
       kind: 'task' as const,
       completed: isTaskDone(task),
     }));
 
-    return [...mealItems, workoutItem, ...taskItems];
-  }, [activeSession.length, currentSplit, tasks, todaysMeals]);
+    return [...mealItems, ...taskItems];
+  }, [activeSession.length, tasks, todaysMeals]);
 
   const loadToday = useCallback(async () => {
     if (!currentUserId || !profile || !onboardingCompleted) {
@@ -268,21 +294,28 @@ export default function DailyHubScreen() {
       ? supabase.from('water_log').select('*').eq('date', date).eq('user_id', currentUserId)
       : supabase.from('water_log').select('*').eq('date', date);
     const [{ data: taskRows, error: taskError }, { data: waterRows, error: waterError }] = await Promise.all([
-      supabase.from('tasks').select('*'),
+      supabase.from('tasks').select('*').eq('user_id', currentUserId),
       waterRequest,
     ]);
 
     if (taskError) console.warn('Unable to load tasks', taskError.message);
     if (waterError) console.warn('Unable to load water log', waterError.message);
 
-    const todayTasks = ((taskRows ?? []) as LooseRow[]).filter((task) => rowDate(task) === date);
+    let allTasks = (taskRows ?? []) as LooseRow[];
+    const ensuredWorkoutTask = await ensureTodayWorkoutTask(todaysWorkout, currentUserId, allTasks);
+    if (ensuredWorkoutTask && !allTasks.some((task) => asText(task.id) === asText(ensuredWorkoutTask.id))) {
+      allTasks = [...allTasks, ensuredWorkoutTask];
+    }
+
+    const todayTasks = dedupeTasks(allTasks.filter((task) => rowDate(task) === date));
     const glasses = Math.min(
       waterGoalGlasses,
       ((waterRows ?? []) as LooseRow[]).reduce((total, row) => total + waterGlasses(row), 0),
     );
-    const nextWater = glasses > 0 ? glasses : Math.min(waterGoalGlasses, Math.round(waterMl / WATER_GLASS_ML));
+    const nextWater = glasses;
     const nutritionScore = calculateGoalScore(Math.min(calories, calorieGoal), calorieGoal);
-    const fitnessScore = activeSession.length > 0 ? 85 : 45;
+    const workoutDone = todaysWorkout.isRestDay || todayTasks.some((task) => isWorkoutTask(task) && isTaskDone(task));
+    const fitnessScore = workoutDone ? 85 : activeSession.length > 0 ? 70 : 45;
     const productivityScore =
       todayTasks.length > 0 ? calculateGoalScore(todayTasks.filter(isTaskDone).length, todayTasks.length) : 50;
     const habitsScore = calculateGoalScore(nextWater, waterGoalGlasses);
@@ -291,7 +324,7 @@ export default function DailyHubScreen() {
       fitnessScore,
       productivityScore,
       habitsScore,
-      learningScore: 50,
+      alignmentScore: 50,
     });
     const nextTaskProgress = `${todayTasks.filter(isTaskDone).length}/${todayTasks.length}`;
 
@@ -309,7 +342,7 @@ export default function DailyHubScreen() {
         waterGlasses: nextWater,
         tasks: todayTasks.map((task) => ({ title: taskTitle(task), done: isTaskDone(task) })),
         meals: todaysMeals,
-        workout: { activeSets: activeSession.length, split: currentSplit },
+        workout: { activeSets: activeSession.length, split: todaysWorkout.splitName, today: todaysWorkout.name },
       });
       setBrief(insight.trim().split('\n')[0] || fallbackBrief(score, caloriesRemaining, nextTaskProgress));
     } catch (error) {
@@ -321,14 +354,15 @@ export default function DailyHubScreen() {
     calorieGoal,
     calories,
     caloriesRemaining,
-    currentSplit,
     dayPeriod.greeting,
+    generatedPlan,
     currentUserId,
     onboardingCompleted,
     profile,
     setLifeScore,
     setWaterMl,
     todaysMeals,
+    todaysWorkout,
     waterMl,
     waterGoalGlasses,
   ]);
@@ -345,6 +379,12 @@ export default function DailyHubScreen() {
   useEffect(() => {
     void refreshToday();
   }, [refreshToday]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshToday();
+    }, [refreshToday]),
+  );
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60 * 1000);
@@ -402,6 +442,11 @@ export default function DailyHubScreen() {
     const title = taskForm.title.trim();
     const date = taskForm.date.trim();
 
+    if (!currentUserId) {
+      Alert.alert('Login required', 'Please login before adding tasks.');
+      return;
+    }
+
     if (!title) {
       Alert.alert('Task title needed', 'Add a title before saving this task.');
       return;
@@ -416,6 +461,7 @@ export default function DailyHubScreen() {
     const { data, error } = await supabase
       .from('tasks')
       .insert({
+        user_id: currentUserId,
         title,
         date,
         time_block: formatTaskTime(taskForm.time),
@@ -459,9 +505,54 @@ export default function DailyHubScreen() {
       notify: false,
     });
     void refreshToday();
-  }, [refreshToday, taskForm]);
+  }, [currentUserId, refreshToday, taskForm]);
+
+  const syncLinkedGoalProgress = useCallback(async (task: LooseRow | null) => {
+    if (!currentUserId || !task) return;
+
+    const weeklyGoalId = asText(task.weekly_goal_id);
+    const monthlyGoalId = asText(task.monthly_goal_id);
+    const updates: Array<PromiseLike<{ error: { message: string } | null }>> = [];
+
+    if (weeklyGoalId) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .eq('weekly_goal_id', weeklyGoalId);
+
+      if (error) {
+        console.warn('Unable to count weekly goal tasks', error.message);
+      } else {
+        const completedCount = ((data ?? []) as LooseRow[]).filter(isTaskDone).length;
+        updates.push(supabase.from('weekly_goals').update({ current_value: completedCount }).eq('id', weeklyGoalId));
+      }
+    }
+
+    if (monthlyGoalId) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .eq('monthly_goal_id', monthlyGoalId);
+
+      if (error) {
+        console.warn('Unable to count monthly goal tasks', error.message);
+      } else {
+        const completedCount = ((data ?? []) as LooseRow[]).filter(isTaskDone).length;
+        updates.push(supabase.from('monthly_goals').update({ current_value: completedCount }).eq('id', monthlyGoalId));
+      }
+    }
+
+    const results = await Promise.all(updates);
+    results.forEach((result) => {
+      if (result.error) console.warn('Unable to sync linked goal progress', result.error.message);
+    });
+  }, [currentUserId]);
 
   const toggleTaskCompleted = useCallback(async (taskId: string, completed: boolean) => {
+    if (!currentUserId) return;
+
     const previousTasks = tasks;
     const nextCompleted = !completed;
     const optimisticTasks = tasks.map((task) =>
@@ -470,10 +561,13 @@ export default function DailyHubScreen() {
 
     setTasks(optimisticTasks);
 
-    const { data, error } = await supabase.rpc('set_task_completed', {
-      input_task_id: taskId,
-      input_completed: nextCompleted,
-    });
+    const { data, error } = await supabase
+      .from('tasks')
+      .update({ completed: nextCompleted })
+      .eq('id', taskId)
+      .eq('user_id', currentUserId)
+      .select('*')
+      .single();
     if (error) {
       console.warn('Unable to update task', error.message);
       setTasks(previousTasks);
@@ -481,15 +575,16 @@ export default function DailyHubScreen() {
       return;
     }
 
-    const updatedTask = (data?.[0] ?? null) as LooseRow | null;
+    const updatedTask = (data ?? null) as LooseRow | null;
     if (updatedTask) {
       setTasks((current) => current.map((task) => (asText(task.id) === taskId ? updatedTask : task)));
+      await syncLinkedGoalProgress(updatedTask);
     }
 
     if (nextCompleted) {
       await cancelTaskNotification(taskId);
     }
-  }, [tasks]);
+  }, [currentUserId, syncLinkedGoalProgress, tasks]);
 
   const actions: ActionTile[] = [
     { label: 'Log Meal', icon: 'restaurant-outline', onPress: () => router.push('/(tabs)/nutrition') },
@@ -655,107 +750,109 @@ export default function DailyHubScreen() {
             </TouchableOpacity>
           </View>
 
-          <TextInput
-            value={taskForm.title}
-            onChangeText={(title) => setTaskForm((current) => ({ ...current, title }))}
-            placeholder="Task title"
-            placeholderTextColor={colors.textMuted}
-            style={styles.taskInput}
-          />
-
-          <TextInput
-            value={taskForm.date}
-            onChangeText={(date) => setTaskForm((current) => ({ ...current, date }))}
-            placeholder="YYYY-MM-DD"
-            placeholderTextColor={colors.textMuted}
-            style={styles.taskInput}
-          />
-
-          <View style={styles.timePicker}>
-            <Text style={styles.fieldLabel}>Time</Text>
-            <View style={styles.timePickerRow}>
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, -60) }))}
-                style={styles.timeButton}>
-                <Ionicons name="remove" size={18} color={colors.textPrimary} />
-              </TouchableOpacity>
-              <Text style={styles.timeValue}>{formatTaskTime(taskForm.time)}</Text>
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, 60) }))}
-                style={styles.timeButton}>
-                <Ionicons name="add" size={18} color={colors.textPrimary} />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.timePickerRow}>
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, -15) }))}
-                style={styles.minuteButton}>
-                <Text style={styles.minuteButtonText}>-15 min</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => setTaskForm((current) => ({ ...current, time: toggleMeridiem(current.time) }))}
-                style={styles.minuteButton}>
-                <Text style={styles.minuteButtonText}>
-                  {taskForm.time.split(':')[0] && Number(taskForm.time.split(':')[0]) >= 12 ? 'PM' : 'AM'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                accessibilityRole="button"
-                onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, 15) }))}
-                style={styles.minuteButton}>
-                <Text style={styles.minuteButtonText}>+15 min</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.priorityRow}>
-            {priorityOptions.map((priority) => {
-              const selected = taskForm.priority === priority;
-              return (
-                <TouchableOpacity
-                  key={priority}
-                  accessibilityRole="button"
-                  onPress={() => setTaskForm((current) => ({ ...current, priority }))}
-                  style={[styles.priorityChip, selected && styles.priorityChipSelected]}>
-                  <Text style={[styles.priorityText, selected && styles.priorityTextSelected]}>{priority}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <TextInput
-            value={taskForm.notes}
-            onChangeText={(notes) => setTaskForm((current) => ({ ...current, notes }))}
-            multiline
-            placeholder="Notes"
-            placeholderTextColor={colors.textMuted}
-            style={[styles.taskInput, styles.taskNotesInput]}
-          />
-
-          <View style={styles.notifyRow}>
-            <View style={styles.notifyCopy}>
-              <Text style={styles.notifyTitle}>Notify me</Text>
-              <Text style={styles.notifyDetail}>Send a reminder when this task time arrives.</Text>
-            </View>
-            <Switch
-              value={taskForm.notify}
-              onValueChange={(notify) => setTaskForm((current) => ({ ...current, notify }))}
-              thumbColor={taskForm.notify ? colors.violetLight : colors.textMuted}
-              trackColor={{ false: colors.surface2, true: colors.violetBg }}
+          <ScrollView showsVerticalScrollIndicator={false} style={styles.modalScroll}>
+            <TextInput
+              value={taskForm.title}
+              onChangeText={(title) => setTaskForm((current) => ({ ...current, title }))}
+              placeholder="Task title"
+              placeholderTextColor={colors.textMuted}
+              style={styles.taskInput}
             />
-          </View>
 
-          <TouchableOpacity
-            accessibilityRole="button"
-            disabled={savingTask}
-            onPress={saveTask}
-            style={[styles.saveReflectionButton, savingTask && styles.disabledButton]}>
-            <Text style={styles.saveReflectionText}>{savingTask ? 'Saving...' : 'Save task'}</Text>
-          </TouchableOpacity>
+            <TextInput
+              value={taskForm.date}
+              onChangeText={(date) => setTaskForm((current) => ({ ...current, date }))}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={colors.textMuted}
+              style={styles.taskInput}
+            />
+
+            <View style={styles.timePicker}>
+              <Text style={styles.fieldLabel}>Time</Text>
+              <View style={styles.timePickerRow}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, -60) }))}
+                  style={styles.timeButton}>
+                  <Ionicons name="remove" size={18} color={colors.textPrimary} />
+                </TouchableOpacity>
+                <Text style={styles.timeValue}>{formatTaskTime(taskForm.time)}</Text>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, 60) }))}
+                  style={styles.timeButton}>
+                  <Ionicons name="add" size={18} color={colors.textPrimary} />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.timePickerRow}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, -15) }))}
+                  style={styles.minuteButton}>
+                  <Text style={styles.minuteButtonText}>-15 min</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => setTaskForm((current) => ({ ...current, time: toggleMeridiem(current.time) }))}
+                  style={styles.minuteButton}>
+                  <Text style={styles.minuteButtonText}>
+                    {taskForm.time.split(':')[0] && Number(taskForm.time.split(':')[0]) >= 12 ? 'PM' : 'AM'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  onPress={() => setTaskForm((current) => ({ ...current, time: adjustTaskTime(current.time, 15) }))}
+                  style={styles.minuteButton}>
+                  <Text style={styles.minuteButtonText}>+15 min</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.priorityRow}>
+              {priorityOptions.map((priority) => {
+                const selected = taskForm.priority === priority;
+                return (
+                  <TouchableOpacity
+                    key={priority}
+                    accessibilityRole="button"
+                    onPress={() => setTaskForm((current) => ({ ...current, priority }))}
+                    style={[styles.priorityChip, selected && styles.priorityChipSelected]}>
+                    <Text style={[styles.priorityText, selected && styles.priorityTextSelected]}>{priority}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <TextInput
+              value={taskForm.notes}
+              onChangeText={(notes) => setTaskForm((current) => ({ ...current, notes }))}
+              multiline
+              placeholder="Notes"
+              placeholderTextColor={colors.textMuted}
+              style={[styles.taskInput, styles.taskNotesInput]}
+            />
+
+            <View style={styles.notifyRow}>
+              <View style={styles.notifyCopy}>
+                <Text style={styles.notifyTitle}>Notify me</Text>
+                <Text style={styles.notifyDetail}>Send a reminder when this task time arrives.</Text>
+              </View>
+              <Switch
+                value={taskForm.notify}
+                onValueChange={(notify) => setTaskForm((current) => ({ ...current, notify }))}
+                thumbColor={taskForm.notify ? colors.violetLight : colors.textMuted}
+                trackColor={{ false: colors.surface2, true: colors.violetBg }}
+              />
+            </View>
+
+            <TouchableOpacity
+              accessibilityRole="button"
+              disabled={savingTask}
+              onPress={saveTask}
+              style={[styles.saveReflectionButton, savingTask && styles.disabledButton]}>
+              <Text style={styles.saveReflectionText}>{savingTask ? 'Saving...' : 'Save task'}</Text>
+            </TouchableOpacity>
+          </ScrollView>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -928,7 +1025,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface1,
     borderTopLeftRadius: radii.card,
     borderTopRightRadius: radii.card,
+    maxHeight: '90%',
     padding: spacing.md,
+  },
+  modalScroll: {
+    marginHorizontal: -spacing.xs,
+    paddingHorizontal: spacing.xs,
   },
   modalHeader: {
     alignItems: 'center',

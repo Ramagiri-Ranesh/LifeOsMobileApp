@@ -118,7 +118,6 @@ function RootLayoutNav() {
           <Stack.Screen name="(onboarding)" />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="ai-coach" options={{ presentation: 'modal' }} />
-          <Stack.Screen name="learning" />
           <Stack.Screen name="finance" />
         </Stack>
       )}

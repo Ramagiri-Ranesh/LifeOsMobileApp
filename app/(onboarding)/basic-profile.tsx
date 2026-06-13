@@ -5,13 +5,19 @@ import { Alert, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, V
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
-import { useUserStore } from '@/stores/useUserStore';
+import { useUserStore, type OnboardingProfile } from '@/stores/useUserStore';
+
+const genderOptions: Array<{ value: OnboardingProfile['gender']; label: string }> = [
+  { value: 'male', label: 'Male' },
+  { value: 'female', label: 'Female' },
+];
 
 export default function BasicProfileScreen() {
   const router = useRouter();
   const draft = useUserStore((state) => state.onboardingProfile);
   const updateOnboardingProfile = useUserStore((state) => state.updateOnboardingProfile);
   const [name, setName] = useState(draft.name);
+  const [gender, setGender] = useState<OnboardingProfile['gender']>(draft.gender === 'female' ? 'female' : 'male');
   const [age, setAge] = useState(String(draft.age));
   const [heightCm, setHeightCm] = useState(String(draft.heightCm));
 
@@ -37,6 +43,7 @@ export default function BasicProfileScreen() {
 
     updateOnboardingProfile({
       name: trimmedName,
+      gender,
       age: Math.round(parsedAge),
       heightCm: Math.round(parsedHeight),
     });
@@ -62,6 +69,24 @@ export default function BasicProfileScreen() {
             style={styles.input}
             value={name}
           />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.inputLabel}>Gender</Text>
+          <View style={styles.segmentedControl}>
+            {genderOptions.map((option) => {
+              const selected = gender === option.value;
+              return (
+                <Pressable
+                  key={option.value}
+                  accessibilityRole="button"
+                  onPress={() => setGender(option.value)}
+                  style={[styles.segmentButton, selected && styles.segmentButtonActive]}>
+                  <Text style={[styles.segmentText, selected && styles.segmentTextActive]}>{option.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.inputRow}>
@@ -181,6 +206,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     minHeight: 54,
     paddingHorizontal: spacing.sm,
+  },
+  segmentedControl: {
+    backgroundColor: colors.surface1,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    padding: 6,
+  },
+  segmentButton: {
+    alignItems: 'center',
+    borderRadius: radii.inner - 4,
+    flex: 1,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  segmentButtonActive: {
+    backgroundColor: colors.violet,
+  },
+  segmentText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  segmentTextActive: {
+    color: colors.textPrimary,
   },
   footer: {
     backgroundColor: colors.background,

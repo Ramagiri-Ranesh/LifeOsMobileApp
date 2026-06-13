@@ -93,7 +93,7 @@ export default function RegisterScreen() {
       setSession({ userId: savedId, username: normalizedUsername });
       setProfile(savedProfile);
       completeOnboarding();
-      setWaterMl(generatedPlan.waterTargetMl);
+      setWaterMl(0);
       setCurrentSplit(generatedPlan.workoutSplit);
 
       const { error: waterError } = await syncWaterLog({

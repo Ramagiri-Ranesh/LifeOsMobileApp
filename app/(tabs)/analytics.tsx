@@ -112,6 +112,7 @@ function exerciseBucket(name: string) {
 
 export default function AnalyticsScreen() {
   const insets = useSafeAreaInsets();
+  const currentUserId = useUserStore((state) => state.currentUserId);
   const calorieGoal = useUserStore((state) => state.calorieGoal);
   const targetWeight = useUserStore((state) => state.profile?.targetWeightKg ?? state.onboardingProfile.targetWeight);
 
@@ -145,10 +146,16 @@ export default function AnalyticsScreen() {
       ] = await Promise.all([
         supabase.from('life_scores').select('*').gte('date', startDate).lte('date', today),
         supabase.from('meal_logs').select('*').gte('date', startDate).lte('date', today),
-        supabase.from('workout_sessions').select('*').gte('completed_at', sinceIso),
-        supabase.from('workout_sets').select('*').gte('created_at', sinceIso).limit(500),
-        supabase.from('tasks').select('*'),
-        supabase.from('body_metrics').select('*').gte('date', startDate).lte('date', today),
+        currentUserId
+          ? supabase.from('workout_sessions').select('*').eq('user_id', currentUserId).gte('completed_at', sinceIso)
+          : supabase.from('workout_sessions').select('*').limit(0),
+        currentUserId
+          ? supabase.from('workout_sets').select('*').eq('user_id', currentUserId).gte('created_at', sinceIso).limit(500)
+          : supabase.from('workout_sets').select('*').limit(0),
+        currentUserId ? supabase.from('tasks').select('*').eq('user_id', currentUserId) : supabase.from('tasks').select('*').limit(0),
+        currentUserId
+          ? supabase.from('body_metrics').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
+          : supabase.from('body_metrics').select('*').limit(0),
         supabase.from('finance_transactions').select('*').gte('date', startDate).lte('date', today),
       ]);
 
@@ -173,7 +180,7 @@ export default function AnalyticsScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [startDate, today]);
+  }, [currentUserId, startDate, today]);
 
   useEffect(() => {
     void loadAnalytics();
@@ -275,13 +282,13 @@ export default function AnalyticsScreen() {
     const nutrition = Math.round((underGoalDays / 7) * 100);
     const fitness = Math.min(100, Math.round((sessionCount / Math.max(1, selectedDays / 7 / 4 * 3)) * 20));
     const productivity = Math.round((taskChart.reduce((sum, week) => sum + week.completed, 0) / Math.max(1, taskChart.reduce((sum, week) => sum + week.completed + week.incomplete, 0))) * 100);
-    const learning = Math.min(100, 62 + Math.round(workoutStreak * 2));
+    const alignment = Math.min(100, 62 + Math.round(workoutStreak * 2));
     const finance = financeRows.length ? Math.max(45, 92 - financeRows.length * 3) : 78;
     return [
       { label: 'Nutrition', value: nutrition, color: colors.emerald },
       { label: 'Fitness', value: fitness, color: colors.amber },
       { label: 'Productivity', value: productivity, color: colors.blue },
-      { label: 'Learning', value: learning, color: colors.indigo },
+      { label: 'Alignment', value: alignment, color: colors.indigo },
       { label: 'Finance', value: finance, color: colors.violet },
     ];
   }, [financeRows.length, selectedDays, sessionCount, taskChart, underGoalDays, workoutStreak]);

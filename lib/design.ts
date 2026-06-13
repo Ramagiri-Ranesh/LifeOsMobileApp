@@ -67,7 +67,6 @@ export const domains = {
   fitness: { color: colors.amber, light: colors.amberLight, background: colors.amberBg },
   goals: { color: colors.blue, light: colors.blueLight, background: colors.blueBg },
   habits: { color: colors.violet, light: colors.violetLight, background: colors.violetBg },
-  learning: { color: colors.indigo, light: colors.indigo, background: colors.indigoBg },
   alert: { color: colors.rose, light: colors.rose, background: colors.roseBg },
 } as const;
 

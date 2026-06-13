@@ -15,6 +15,41 @@ function asStringArray(value: Json | undefined) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+function asGender(value: Json | undefined): UserProfile['gender'] {
+  return value === 'female' ? 'female' : 'male';
+}
+
+function asWeeklyWorkouts(value: Json | undefined): GeneratedPlan['weeklyWorkouts'] {
+  if (!Array.isArray(value)) return undefined;
+
+  return value
+    .filter((item): item is LooseRow => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    .map((day) => {
+      const exercises = Array.isArray(day.exercises)
+        ? day.exercises
+            .filter((exercise): exercise is LooseRow => Boolean(exercise) && typeof exercise === 'object' && !Array.isArray(exercise))
+            .map((exercise) => ({
+              name: asText(exercise.name, 'Exercise'),
+              muscleGroup: asText(exercise.muscleGroup) || asText(exercise.muscle_group),
+              targetSets: asNumber(exercise.targetSets) || asNumber(exercise.target_sets, 3),
+              reps: asNumber(exercise.reps, 8),
+              weightKg: asNumber(exercise.weightKg) || asNumber(exercise.weight_kg, 0),
+            }))
+        : [];
+
+      return {
+        dayIndex: asNumber(day.dayIndex) || asNumber(day.day_index, 0),
+        label: asText(day.label, 'Workout'),
+        templateName: asText(day.templateName) || asText(day.template_name, asText(day.label, 'Workout')),
+        muscleGroups: asStringArray(day.muscleGroups).length > 0
+          ? asStringArray(day.muscleGroups)
+          : asStringArray(day.muscle_groups),
+        isRestDay: day.isRestDay === true || day.is_rest_day === true,
+        exercises,
+      };
+    });
+}
+
 function asMacros(value: Json | undefined, fallback: { protein: number; carbs: number; fat: number }) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
   const row = value as LooseRow;
@@ -48,6 +83,7 @@ export function buildProfilePayload(args: {
   return {
     username: args.username,
     name: args.profile.name,
+    gender: args.profile.gender,
     age: args.profile.age,
     height_cm: args.profile.heightCm,
     weight_kg: args.profile.weightKg,
@@ -94,9 +130,10 @@ export function profileFromRow(row: LooseRow): {
     : null;
   const waterTargetMl = asNumber(row.daily_water_goal_ml) || asNumber(row.water_target_ml, 3000);
   const generatedPlan = planRow
-    ? {
+      ? {
         workoutSplit: asText(planRow.workoutSplit) || asText(row.workout_split) || asText(row.split, 'PPL schedule'),
         dayPills: asStringArray(planRow.dayPills),
+        weeklyWorkouts: asWeeklyWorkouts(planRow.weeklyWorkouts) ?? asWeeklyWorkouts(planRow.weekly_workouts),
         firstWeekGoals: asStringArray(planRow.firstWeekGoals).length > 0
           ? asStringArray(planRow.firstWeekGoals)
           : asStringArray(planRow.bullets),
@@ -109,6 +146,7 @@ export function profileFromRow(row: LooseRow): {
       id: asText(row.id),
       username: asText(row.username),
       name: asText(row.name, 'User'),
+      gender: asGender(row.gender),
       age: asNumber(row.age, 29),
       heightCm: asNumber(row.height_cm, 175),
       weightKg: asNumber(row.weight_kg, 75),

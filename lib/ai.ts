@@ -118,7 +118,7 @@ export const getMealSuggestion = (context?: AIContext) =>
   );
 
 export const getWeeklyReview = (context?: AIContext) =>
-  callAI('Write a concise weekly review across nutrition, gym, goals, habits, and learning.', context);
+  callAI('Write a concise weekly review across nutrition, gym, goals, habits, and finance.', context);
 
 export const getDailyBrief = (context?: AIContext) =>
   callAI('Create one concise daily command-center sentence with the most important next action. Return plain text only, no markdown.', context);

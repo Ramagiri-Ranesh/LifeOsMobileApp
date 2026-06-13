@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
+import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
 
 type LooseRow = Record<string, Json | undefined>;
@@ -29,14 +30,18 @@ function asNumber(value: Json | undefined, fallback = 0) {
 }
 
 function sessionFromRow(row: LooseRow, index: number): HistorySession {
+  const muscleGroups = Array.isArray(row.muscle_groups)
+    ? row.muscle_groups.filter((item): item is string => typeof item === 'string').join(', ')
+    : '';
+
   return {
     id: String(row.id ?? `session-${index}`),
-    name: asText(row.name, 'Workout'),
+    name: asText(row.template_name) || asText(row.name, 'Workout'),
     completedAt: asText(row.completed_at) || asText(row.started_at) || asText(row.created_at),
     durationMinutes: asNumber(row.duration_minutes),
     volumeKg: asNumber(row.total_volume_kg),
-    setsDone: asNumber(row.sets_done),
-    muscleGroup: asText(row.muscle_group, 'Mixed'),
+    setsDone: asNumber(row.total_sets) || asNumber(row.sets_done),
+    muscleGroup: muscleGroups || asText(row.muscle_group, 'Mixed'),
   };
 }
 
@@ -49,15 +54,22 @@ function formatDate(value: string) {
 
 export default function WorkoutHistoryScreen() {
   const insets = useSafeAreaInsets();
+  const currentUserId = useUserStore((state) => state.currentUserId);
   const [sessions, setSessions] = useState<HistorySession[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadSessions = useCallback(async () => {
+    if (!currentUserId) {
+      setSessions([]);
+      return;
+    }
+
     setRefreshing(true);
     try {
       const { data, error } = await supabase
         .from('workout_sessions')
         .select('*')
+        .eq('user_id', currentUserId)
         .order('completed_at', { ascending: false })
         .limit(30);
       if (error) throw error;
@@ -68,7 +80,7 @@ export default function WorkoutHistoryScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [currentUserId]);
 
   useEffect(() => {
     void loadSessions();

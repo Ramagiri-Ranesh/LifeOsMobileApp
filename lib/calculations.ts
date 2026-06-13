@@ -1,5 +1,6 @@
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'veryActive';
 export type FitnessGoal = 'cut' | 'maintain' | 'bulk';
+export type Gender = 'male' | 'female';
 
 const activityMultipliers: Record<ActivityLevel, number> = {
   sedentary: 1.2,
@@ -18,8 +19,15 @@ function localDateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-export function calculateTDEE(weightKg: number, heightCm: number, age: number, activityLevel: ActivityLevel) {
-  const bmr = 10 * weightKg + 6.25 * heightCm - 5 * age + 5;
+export function calculateTDEE(
+  weightKg: number,
+  heightCm: number,
+  age: number,
+  activityLevel: ActivityLevel,
+  gender: Gender = 'male',
+) {
+  const genderConstant = gender === 'female' ? -161 : 5;
+  const bmr = 10 * weightKg + 6.25 * heightCm - 5 * age + genderConstant;
   return Math.round(bmr * activityMultipliers[activityLevel]);
 }
 
@@ -40,14 +48,14 @@ export function calculateLifeScore(scores: {
   fitnessScore: number;
   productivityScore: number;
   habitsScore: number;
-  learningScore: number;
+  alignmentScore: number;
 }) {
   return Math.round(
     clampScore(scores.nutritionScore) * 0.25 +
       clampScore(scores.fitnessScore) * 0.25 +
       clampScore(scores.productivityScore) * 0.2 +
       clampScore(scores.habitsScore) * 0.2 +
-      clampScore(scores.learningScore) * 0.1,
+      clampScore(scores.alignmentScore) * 0.1,
   );
 }
 
