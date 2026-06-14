@@ -72,6 +72,31 @@ alter table public.profiles add column if not exists created_at timestamptz defa
 alter table public.profiles add column if not exists updated_at timestamptz default now();
 alter table public.profiles drop column if exists onboarding_done;
 
+do $$
+declare
+  preference_column text;
+begin
+  foreach preference_column in array array['cuisine_prefs', 'foods_to_avoid', 'foods_eaten', 'foods_avoided']
+  loop
+    if exists (
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'profiles'
+        and column_name = preference_column
+        and data_type = 'ARRAY'
+    ) then
+      execute format('alter table public.profiles alter column %I drop default', preference_column);
+      execute format(
+        'alter table public.profiles alter column %I type jsonb using coalesce(to_jsonb(%I), ''[]''::jsonb)',
+        preference_column,
+        preference_column
+      );
+      execute format('alter table public.profiles alter column %I set default ''[]''::jsonb', preference_column);
+    end if;
+  end loop;
+end $$;
+
 update public.profiles
 set
   fitness_goal = case

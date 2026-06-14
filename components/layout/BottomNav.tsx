@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
 
@@ -11,6 +12,11 @@ const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
   analytics: 'analytics-outline',
   habits: 'repeat-outline',
   settings: 'settings-outline',
+};
+
+const compactLabels: Record<string, string> = {
+  analytics: 'Stats',
+  settings: 'Setup',
 };
 
 type BottomNavProps = {
@@ -25,12 +31,14 @@ type BottomNavProps = {
 };
 
 export function BottomNav({ state, descriptors, navigation }: BottomNavProps) {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, { marginBottom: Math.max(spacing.sm, insets.bottom + spacing.xs) }]}>
       {state.routes.map((route, index) => {
         const focused = state.index === index;
         const options = descriptors[route.key].options;
-        const label = String(options.title ?? route.name);
+        const label = compactLabels[route.name] ?? String(options.title ?? route.name);
 
         return (
           <Pressable
@@ -44,7 +52,7 @@ export function BottomNav({ state, descriptors, navigation }: BottomNavProps) {
               color={focused ? colors.violetLight : colors.textMuted}
               size={20}
             />
-            <Text style={[styles.label, focused && styles.labelActive]} numberOfLines={1}>
+            <Text allowFontScaling={false} style={[styles.label, focused && styles.labelActive]} numberOfLines={1}>
               {label}
             </Text>
           </Pressable>

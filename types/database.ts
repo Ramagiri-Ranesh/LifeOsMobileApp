@@ -29,6 +29,7 @@ export type Database = {
       monthly_goals: Table;
       habits: Table;
       habit_logs: Table;
+      notifications: Table;
       life_scores: Table;
       learning_books: Table;
       learning_courses: Table;

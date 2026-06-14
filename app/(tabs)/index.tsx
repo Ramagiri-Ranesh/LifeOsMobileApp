@@ -27,7 +27,7 @@ import { calculateGoalScore, calculateLifeScore } from '@/lib/calculations';
 import { getDailyBrief } from '@/lib/ai';
 import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/design';
 import { mealFallbackTime } from '@/lib/nutritionSchedule';
-import { cancelTaskNotification, scheduleTaskNotification } from '@/lib/notifications';
+import { cancelTaskNotification, countUnreadNotifications, scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { syncWaterLog } from '@/lib/waterLog';
 import { ensureTodayWorkoutTask, isWorkoutTask } from '@/lib/workoutTasks';
@@ -231,6 +231,7 @@ export default function DailyHubScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [taskModalVisible, setTaskModalVisible] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [taskForm, setTaskForm] = useState<AddTaskForm>({
     title: '',
     date: todayKey(),
@@ -298,6 +299,7 @@ export default function DailyHubScreen() {
       supabase.from('tasks').select('*').eq('user_id', currentUserId),
       waterRequest,
     ]);
+    setUnreadNotifications(await countUnreadNotifications(currentUserId));
 
     if (taskError) console.warn('Unable to load tasks', taskError.message);
     if (waterError) console.warn('Unable to load water log', waterError.message);
@@ -630,10 +632,26 @@ export default function DailyHubScreen() {
           <Text style={styles.name}>{name}</Text>
         </View>
         <View style={styles.headerRight}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open notifications"
+            onPress={() => router.push('/notifications' as never)}
+            style={styles.notificationButton}>
+            <Ionicons name="notifications-outline" size={20} color={colors.textPrimary} />
+            {unreadNotifications > 0 ? (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>{unreadNotifications > 9 ? '9+' : unreadNotifications}</Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
           <Text style={styles.date}>{formatHeaderDate()}</Text>
-          <View style={styles.avatar}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open profile"
+            onPress={() => router.push('/profile' as never)}
+            style={styles.avatar}>
             <Text style={styles.avatarText}>{name.charAt(0).toUpperCase()}</Text>
-          </View>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -911,6 +929,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.xs,
+  },
+  notificationButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    position: 'relative',
+    width: 36,
+  },
+  notificationBadge: {
+    alignItems: 'center',
+    backgroundColor: colors.rose,
+    borderColor: colors.background,
+    borderRadius: 9,
+    borderWidth: 1,
+    minWidth: 18,
+    paddingHorizontal: 4,
+    position: 'absolute',
+    right: -4,
+    top: -5,
+  },
+  notificationBadgeText: {
+    color: colors.textPrimary,
+    fontSize: 10,
+    fontWeight: '800',
+    lineHeight: 14,
   },
   date: {
     ...typography.labelCaps,

@@ -4,7 +4,7 @@
 
 This document translates `docs/prd.md` and the current repository into a technical architecture for upgrading LifeOS safely.
 
-LifeOS is currently a React Native + Expo Router app with Supabase persistence, Zustand local state, custom username/password login, OpenAI/Ollama AI integration, local notifications, background anomaly checks, and a partially complete Supabase schema surface.
+LifeOS is currently a React Native + Expo Router app with Supabase persistence, Zustand local state, custom username/password login, editable profile management, OpenAI/Ollama AI integration, local notifications with a persisted inbox, background anomaly checks, and a partially complete Supabase schema surface.
 
 This architecture has three jobs:
 
@@ -59,6 +59,8 @@ LifeOS/
     _layout.tsx
     ai-coach.tsx
     finance.tsx
+    notifications.tsx
+    profile.tsx
     workout-history.tsx
   components/
     layout/
@@ -113,6 +115,8 @@ app/
     settings.tsx           Notifications, AI model, lock, backup, logout
 
   ai-coach.tsx             Modal AI coach
+  notifications.tsx        Persisted notification inbox
+  profile.tsx              View/edit profile
   workout-history.tsx      Gym session history
   finance.tsx              Placeholder
 ```
@@ -219,6 +223,7 @@ supabase/
     202606130005_tasks_user_scope.sql
     202606130006_dedupe_workout_tasks.sql
     202606130007_workout_history_access.sql
+    202606140004_notifications_profile_inbox.sql
   functions/
     lifeos-anomaly-alerts/
       index.ts
@@ -242,6 +247,7 @@ Responsibilities:
 - Redirect unauthenticated users to onboarding/login.
 - Redirect authenticated users away from onboarding.
 - Register notification response handler.
+- Register notification received handler for inbox delivery updates.
 - Register background anomaly task.
 - Enforce app lock with local authentication.
 - Define root stack routes.
@@ -334,6 +340,7 @@ flowchart TD
   DailyHub --> NutritionStore
   DailyHub --> AnalyticsStore
   DailyHub --> Tasks[(tasks)]
+  DailyHub --> Notifications[(notifications)]
   DailyHub --> Water[(water_log)]
   DailyHub --> WorkoutPlan[workoutPlan]
   WorkoutPlan --> WorkoutTasks[workoutTasks]
@@ -393,6 +400,7 @@ This inventory includes all tables listed in `types/database.ts`, all tables cre
 | `profiles` | Created | Self | User profile, onboarding, targets, generated plan |
 | `app_users` | Created | `profile_id` | Custom app login credentials |
 | `tasks` | Created | `user_id` | Daily tasks and generated workout tasks |
+| `notifications` | Created | `user_id` | In-app notification inbox, unread state, delivery metadata |
 | `food_items` | Missing creation migration | `user_id` nullable or required | Food database and custom foods |
 | `meal_logs` | Missing creation migration | `user_id` | Meal header by date/type |
 | `meal_log_items` | Missing creation migration | Via `meal_log_id`, optional direct `user_id` | Foods logged under a meal |
@@ -535,7 +543,49 @@ Upgrade requirements:
 - Add `updated_at`.
 - Add optional `source_type`, `source_id`, `due_time`, `notification_id` if task reminders need lifecycle tracking.
 
-### 8.4 `food_items`
+### 8.4 `notifications`
+
+Purpose:
+
+- Persist app-related reminders and alerts so device notifications also have an in-app history.
+
+Key columns:
+
+- `id uuid primary key default gen_random_uuid()`
+- `user_id uuid references public.profiles(id) on delete cascade`
+- `title text not null`
+- `body text not null`
+- `kind text not null default 'system'`
+- `route text`
+- `related_entity_type text`
+- `related_entity_id text`
+- `scheduled_at timestamptz`
+- `delivered_at timestamptz`
+- `read_at timestamptz`
+- `delivery_status text not null default 'scheduled'`
+- `device_notification_id text`
+- `metadata jsonb default '{}'`
+- `created_at timestamptz default now()`
+
+Indexes:
+
+- `notifications_user_created_idx (user_id, created_at desc)`
+- `notifications_user_read_idx (user_id, read_at)`
+- `notifications_device_notification_idx (device_notification_id)`
+
+Relationships:
+
+- `notifications.user_id -> profiles.id`
+- `related_entity_type` and `related_entity_id` provide soft links to tasks and future notification sources.
+
+Runtime behavior:
+
+- `scheduleTaskNotification` stores a `task_reminder` row before scheduling the device notification.
+- Daily/weekly LifeOS reminders store rows with route metadata when schedules are refreshed.
+- Foreground delivered notifications mark matching rows as delivered when `notificationId` is present in notification data.
+- The inbox screen marks one notification or all unread notifications as read by writing `read_at`.
+
+### 8.5 `food_items`
 
 Purpose:
 
@@ -565,7 +615,7 @@ RLS:
 - Read global foods where `user_id is null`.
 - Read/write own foods where `user_id = current profile id`.
 
-### 8.5 `meal_logs`
+### 8.6 `meal_logs`
 
 Purpose:
 
@@ -599,7 +649,7 @@ Important code gap:
 
 - `useNutritionStore.getOrCreateMealLog` currently queries by `date` and `meal_type` only, without `user_id`. Upgrade this before multi-user use.
 
-### 8.6 `meal_log_items`
+### 8.7 `meal_log_items`
 
 Purpose:
 
@@ -630,7 +680,7 @@ Upgrade requirements:
 - Add denormalized nutrient values as stored snapshot, because food definitions can change later.
 - RLS via parent `meal_logs.user_id`.
 
-### 8.7 `meal_templates`
+### 8.8 `meal_templates`
 
 Purpose:
 
@@ -658,7 +708,7 @@ RLS:
 
 - User-owned templates only. Unlike `food_items`, templates are not loaded globally because each user builds repeat meals from their own logging flow.
 
-### 8.8 `meal_template_items`
+### 8.9 `meal_template_items`
 
 Purpose:
 
@@ -684,7 +734,7 @@ Relationships:
 - `meal_template_items.meal_template_id -> meal_templates.id`
 - `meal_template_items.food_item_id -> food_items.id`
 
-### 8.9 `workout_sessions`
+### 8.10 `workout_sessions`
 
 Purpose:
 
@@ -717,7 +767,7 @@ Indexes:
 - `(user_id, completed_at desc)`
 - `(user_id, date, template_name)`
 
-### 8.10 `workout_sets`
+### 8.11 `workout_sets`
 
 Purpose:
 
@@ -747,7 +797,7 @@ Critical upgrade decision:
 
 - Standardize on `session_id`. Current PRD notes uncertainty with `workout_session_id`, but current Gym code writes `session_id`. Migrations must create that FK and nested Supabase selects must use it.
 
-### 8.11 `body_metrics`
+### 8.12 `body_metrics`
 
 Purpose:
 
@@ -773,7 +823,7 @@ Constraints:
 
 - Recommended unique: `(user_id, date)`.
 
-### 8.12 `water_log`
+### 8.13 `water_log`
 
 Purpose:
 
@@ -803,7 +853,7 @@ Upgrade requirements:
 - Make `user_id` not null after existing data is cleaned.
 - Add owner-scoped RLS.
 
-### 8.13 `weekly_goals`
+### 8.14 `weekly_goals`
 
 Purpose:
 
@@ -832,7 +882,7 @@ Relationships:
 - `weekly_goals.user_id -> profiles.id`
 - `weekly_goals.monthly_goal_id -> monthly_goals.id`
 
-### 8.14 `monthly_goals`
+### 8.15 `monthly_goals`
 
 Purpose:
 
@@ -856,7 +906,7 @@ Relationships:
 - `monthly_goals.user_id -> profiles.id`
 - `weekly_goals.monthly_goal_id -> monthly_goals.id`
 
-### 8.15 `habits`
+### 8.16 `habits`
 
 Purpose:
 
@@ -890,7 +940,7 @@ Upgrade requirements:
 
 - Stop using `supabase.auth.getUser()` unless the app migrates to Supabase Auth.
 
-### 8.16 `habit_logs`
+### 8.17 `habit_logs`
 
 Purpose:
 
@@ -919,7 +969,7 @@ Constraints:
 
 - Recommended unique: `(habit_id, date)`.
 
-### 8.17 `life_scores`
+### 8.18 `life_scores`
 
 Purpose:
 
@@ -950,7 +1000,7 @@ Constraints:
 
 - Recommended unique: `(user_id, date)`.
 
-### 8.18 `learning_books` Retired Type
+### 8.19 `learning_books` Retired Type
 
 Purpose:
 
@@ -975,7 +1025,7 @@ Relationships:
 
 - `learning_books.user_id -> profiles.id`
 
-### 8.19 `learning_courses` Retired Type
+### 8.20 `learning_courses` Retired Type
 
 Purpose:
 
@@ -999,7 +1049,7 @@ Relationships:
 
 - `learning_courses.user_id -> profiles.id`
 
-### 8.20 `finance_categories`
+### 8.21 `finance_categories`
 
 Purpose:
 
@@ -1025,7 +1075,7 @@ RLS:
 - Allow global categories where `user_id is null`.
 - Allow user categories where `user_id = current profile id`.
 
-### 8.21 `finance_transactions`
+### 8.22 `finance_transactions`
 
 Purpose:
 
@@ -1050,7 +1100,7 @@ Relationships:
 - `finance_transactions.user_id -> profiles.id`
 - `finance_transactions.finance_category_id -> finance_categories.id`
 
-### 8.22 `weekly_summaries`
+### 8.23 `weekly_summaries`
 
 Purpose:
 
@@ -1080,7 +1130,7 @@ Constraints:
 
 - Recommended unique: `(user_id, week_start)`.
 
-### 8.23 `ai_coach_messages`
+### 8.24 `ai_coach_messages`
 
 Purpose:
 
@@ -1111,6 +1161,7 @@ Upgrade requirements:
 erDiagram
   profiles ||--|| app_users : "has login"
   profiles ||--o{ tasks : owns
+  profiles ||--o{ notifications : owns
   profiles ||--o{ water_log : owns
   profiles ||--o{ food_items : owns
   profiles ||--o{ meal_logs : owns
@@ -1242,13 +1293,15 @@ Current behavior:
 
 - Schedules daily and weekly local notifications.
 - Schedules one-off task reminders.
+- Persists scheduled/delivered notification rows in `notifications`.
+- Exposes notification inbox reads and read-state updates.
 - Registers background task `lifeos-ai-anomaly-alerts`.
 - Invokes Supabase Edge Function for anomaly alerts.
 - Routes notification taps to Expo Router paths.
 
 Upgrade requirements:
 
-- Persist scheduled notification ids if reminders need editing/canceling beyond task completion.
+- Keep scheduled notification ids and persisted inbox rows in sync when reminders are edited, canceled, or delivered.
 - Ensure routes in notification payloads stay valid.
 - Gate background registration by platform/runtime.
 - Make Edge Function data user-scoped.

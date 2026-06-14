@@ -13,6 +13,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -168,6 +169,8 @@ function formatRest(seconds: number) {
 
 export default function GymScreen() {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isCompactWidth = width < 390;
   const profile = useUserStore((state) => state.profile);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const generatedPlan = useUserStore((state) => state.generatedPlan);
@@ -619,25 +622,27 @@ export default function GymScreen() {
         ListHeaderComponent={
           <>
             <View style={styles.header}>
-              <View style={styles.headerCopy}>
+              <View style={styles.headerTop}>
                 <Text style={styles.headerLabel}>Today's Workout</Text>
+                <View style={styles.headerActions}>
+                  <TouchableOpacity accessibilityLabel="Check week schedule" style={styles.historyButton} onPress={() => setScheduleModalVisible(true)}>
+                    <Ionicons name="calendar-outline" size={22} color={colors.amberLight} />
+                  </TouchableOpacity>
+                  <TouchableOpacity accessibilityLabel="Workout history" style={styles.historyButton} onPress={() => router.push('/workout-history' as never)}>
+                    <Ionicons name="time-outline" size={22} color={colors.amberLight} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.headerCopy}>
                 <Text style={styles.workoutTitle}>{template.name}</Text>
                 <Text style={styles.headerSub}>{template.dayLabel} · {template.splitName}</Text>
-              </View>
-              <View style={styles.headerActions}>
-                <TouchableOpacity accessibilityLabel="Check week schedule" style={styles.historyButton} onPress={() => setScheduleModalVisible(true)}>
-                  <Ionicons name="calendar-outline" size={22} color={colors.amberLight} />
-                </TouchableOpacity>
-                <TouchableOpacity accessibilityLabel="Workout history" style={styles.historyButton} onPress={() => router.push('/workout-history' as never)}>
-                  <Ionicons name="time-outline" size={22} color={colors.amberLight} />
-                </TouchableOpacity>
               </View>
             </View>
 
             <View style={styles.summaryCard}>
-              <View style={styles.summaryGrid}>
+              <View style={[styles.summaryGrid, isCompactWidth && styles.summaryGridCompact]}>
                 <StatTile label="Duration" value={`${displayedDuration}m`} />
-                <StatTile label="Total Volume kg" value={Math.round(displayedVolume).toLocaleString()} />
+                <StatTile label="Volume (kg)" value={Math.round(displayedVolume).toLocaleString()} />
                 <StatTile label="Sets Done" value={`${displayedSetsDone}/${displayedSetsTarget}`} />
               </View>
               <View style={styles.progressTrack}>
@@ -647,9 +652,11 @@ export default function GymScreen() {
 
             <View style={styles.heatmapCard}>
               <View style={styles.cardHeader}>
-                <View>
+                <View style={styles.cardTitleWrap}>
                   <Text style={styles.cardTitle}>Muscle Heatmap</Text>
-                  <Text style={styles.cardSubtitle}>{displayedMuscles.map(titleCase).join(' · ')}</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {displayedMuscles.length > 0 ? displayedMuscles.map(titleCase).join(' · ') : 'Recovery day'}
+                  </Text>
                 </View>
                 {restWarning ? (
                   <View style={styles.warningBadge}>
@@ -707,7 +714,9 @@ export default function GymScreen() {
               />
             ) : (
               <View style={styles.recoveryCard}>
-                <Ionicons name="leaf-outline" size={22} color={colors.emeraldLight} />
+                <View style={styles.recoveryIcon}>
+                  <Ionicons name="leaf-outline" size={22} color={colors.emeraldLight} />
+                </View>
                 <View style={styles.recoveryCopy}>
                   <Text style={styles.recoveryTitle}>No lifting scheduled today</Text>
                   <Text style={styles.recoveryText}>Use the week schedule to review upcoming workouts without changing today.</Text>
@@ -951,17 +960,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: spacing.sm,
-    paddingHorizontal: 20,
+    alignSelf: 'center',
+    gap: 12,
+    maxWidth: 560,
+    paddingHorizontal: spacing.gutter,
+    width: '100%',
   },
   header: {
+    gap: 4,
+    paddingBottom: 4,
+  },
+  headerTop: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: spacing.xs,
     justifyContent: 'space-between',
   },
   headerCopy: {
-    flex: 1,
+    gap: 2,
+    minWidth: 0,
   },
   headerActions: {
     flexDirection: 'row',
@@ -969,20 +985,21 @@ const styles = StyleSheet.create({
   },
   headerLabel: {
     color: colors.textSecondary,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
-    lineHeight: 18,
+    lineHeight: 20,
   },
   workoutTitle: {
     color: colors.amber,
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
-    lineHeight: 30,
+    lineHeight: 31,
   },
   headerSub: {
-    ...typography.body,
     color: colors.textMuted,
+    fontSize: 14,
     fontWeight: '700',
+    lineHeight: 21,
   },
   historyButton: {
     alignItems: 'center',
@@ -999,12 +1016,15 @@ const styles = StyleSheet.create({
     borderColor: colors.amber,
     borderRadius: radii.card,
     borderWidth: 1,
-    gap: spacing.sm,
+    gap: 14,
     padding: spacing.sm,
   },
   summaryGrid: {
     flexDirection: 'row',
     gap: spacing.xs,
+  },
+  summaryGridCompact: {
+    gap: 6,
   },
   statTile: {
     backgroundColor: colors.amberBg,
@@ -1012,56 +1032,67 @@ const styles = StyleSheet.create({
     borderRadius: radii.inner,
     borderWidth: 1,
     flex: 1,
-    minHeight: 76,
+    minHeight: 80,
     justifyContent: 'center',
-    padding: spacing.xs,
+    minWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   statValue: {
     color: colors.textPrimary,
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: '800',
-    lineHeight: 26,
+    lineHeight: 27,
   },
   statLabel: {
     color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '800',
     lineHeight: 15,
-    marginTop: 3,
+    marginTop: 5,
   },
   progressTrack: {
     backgroundColor: colors.surface2,
     borderRadius: radii.pill,
-    height: 6,
+    height: 8,
     overflow: 'hidden',
   },
   progressFill: {
     backgroundColor: colors.amber,
     borderRadius: radii.pill,
-    height: 6,
+    height: 8,
   },
   heatmapCard: {
     backgroundColor: colors.surface1,
     borderColor: colors.borderLight,
     borderRadius: radii.card,
     borderWidth: 1,
-    padding: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
   },
   cardHeader: {
     alignItems: 'flex-start',
     flexDirection: 'row',
-    gap: spacing.xs,
+    gap: spacing.sm,
     justifyContent: 'space-between',
   },
   cardTitle: {
     color: colors.textPrimary,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '800',
+    lineHeight: 27,
+  },
+  cardTitleWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   cardSubtitle: {
-    ...typography.body,
     color: colors.textMuted,
+    fontSize: 13,
     fontWeight: '700',
+    lineHeight: 19,
+    marginTop: 2,
   },
   warningBadge: {
     backgroundColor: colors.roseBg,
@@ -1078,28 +1109,31 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   heatmapWrap: {
-    marginTop: spacing.xs,
+    marginTop: 10,
   },
   heatmapLabels: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginTop: -6,
+    marginTop: 2,
   },
   heatmapLabel: {
     color: colors.textMuted,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
+    lineHeight: 18,
   },
   sectionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: spacing.xs,
+    marginTop: 2,
   },
   sectionTitle: {
     color: colors.textPrimary,
-    fontSize: 19,
+    flex: 1,
+    fontSize: 21,
     fontWeight: '800',
+    lineHeight: 28,
   },
   sectionActions: {
     alignItems: 'center',
@@ -1161,23 +1195,34 @@ const styles = StyleSheet.create({
     borderRadius: radii.inner,
     borderWidth: 1,
     flexDirection: 'row',
-    gap: spacing.xs,
-    padding: spacing.sm,
+    gap: 12,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  recoveryIcon: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderRadius: radii.pill,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
   },
   recoveryCopy: {
     flex: 1,
+    minWidth: 0,
   },
   recoveryTitle: {
     color: colors.textPrimary,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '900',
+    lineHeight: 22,
   },
   recoveryText: {
     color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '700',
-    lineHeight: 18,
-    marginTop: 2,
+    lineHeight: 19,
+    marginTop: 3,
   },
   savedWorkoutCard: {
     alignItems: 'center',

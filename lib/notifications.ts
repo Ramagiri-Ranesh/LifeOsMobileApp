@@ -10,6 +10,7 @@ import { useHabitsStore } from '@/stores/useHabitsStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
+import type { Json } from '@/types/database';
 
 const LIFEOS_ANOMALY_TASK = 'lifeos-ai-anomaly-alerts';
 
@@ -19,12 +20,30 @@ type NotificationRoute =
   | '/(tabs)/nutrition'
   | '/(tabs)/gym'
   | '/(tabs)/analytics'
-  | '/(tabs)/settings';
+  | '/(tabs)/settings'
+  | '/notifications';
 
 type EdgeAlert = {
   title?: string;
   body?: string;
   route?: NotificationRoute;
+};
+
+export type AppNotification = {
+  id: string;
+  user_id?: string;
+  title: string;
+  body: string;
+  kind: string;
+  route?: string;
+  related_entity_type?: string;
+  related_entity_id?: string;
+  scheduled_at?: string;
+  delivered_at?: string;
+  read_at?: string;
+  delivery_status?: string;
+  metadata?: Json;
+  created_at?: string;
 };
 
 type RouterLike = {
@@ -102,6 +121,22 @@ function localDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+function nextScheduledAt(time: string, weekday?: number) {
+  const { hour, minute } = parseTime(time);
+  const next = new Date();
+  next.setHours(hour, minute, 0, 0);
+
+  if (weekday) {
+    const currentWeekday = next.getDay() + 1;
+    const daysToAdd = (weekday - currentWeekday + 7) % 7 || (next.getTime() <= Date.now() ? 7 : 0);
+    next.setDate(next.getDate() + daysToAdd);
+  } else if (next.getTime() <= Date.now()) {
+    next.setDate(next.getDate() + 1);
+  }
+
+  return next.toISOString();
+}
+
 function weekNumber(date = new Date()) {
   const firstDay = new Date(date.getFullYear(), 0, 1);
   const elapsedDays = Math.floor((date.getTime() - firstDay.getTime()) / 86400000);
@@ -152,12 +187,122 @@ async function requestNotificationPermissions(notifications: NotificationsModule
   return requested.granted;
 }
 
+export async function createNotificationRecord(params: {
+  userId?: string | null;
+  title: string;
+  body: string;
+  kind: string;
+  route?: NotificationRoute;
+  relatedEntityType?: string;
+  relatedEntityId?: string;
+  scheduledAt?: string;
+  deliveredAt?: string;
+  deliveryStatus?: 'scheduled' | 'delivered' | 'failed';
+  metadata?: Record<string, unknown>;
+}) {
+  if (!params.userId) return null;
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .insert({
+      user_id: params.userId,
+      title: params.title,
+      body: params.body,
+      kind: params.kind,
+      route: params.route,
+      related_entity_type: params.relatedEntityType,
+      related_entity_id: params.relatedEntityId,
+      scheduled_at: params.scheduledAt,
+      delivered_at: params.deliveredAt,
+      delivery_status: params.deliveryStatus ?? 'scheduled',
+      metadata: JSON.parse(JSON.stringify(params.metadata ?? {})) as Json,
+    })
+    .select('*')
+    .single();
+
+  if (error) {
+    console.warn('Unable to store notification', error.message);
+    return null;
+  }
+
+  return data as AppNotification;
+}
+
+async function markNotificationDelivered(notificationId?: string, deviceNotificationId?: string) {
+  if (!notificationId) return;
+
+  const { error } = await supabase
+    .from('notifications')
+    .update({
+      delivered_at: new Date().toISOString(),
+      delivery_status: 'delivered',
+      device_notification_id: deviceNotificationId,
+    })
+    .eq('id', notificationId);
+
+  if (error) console.warn('Unable to mark notification delivered', error.message);
+}
+
+export async function loadAppNotifications(userId: string, limit = 50) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.warn('Unable to load notifications', error.message);
+    return [];
+  }
+
+  return (data ?? []) as AppNotification[];
+}
+
+export async function countUnreadNotifications(userId: string) {
+  const { count, error } = await supabase
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .is('read_at', null)
+    .or(`delivery_status.eq.delivered,scheduled_at.lte.${new Date().toISOString()}`);
+
+  if (error) {
+    console.warn('Unable to count notifications', error.message);
+    return 0;
+  }
+
+  return count ?? 0;
+}
+
+export async function markNotificationRead(notificationId: string) {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', notificationId);
+
+  if (error) console.warn('Unable to mark notification read', error.message);
+}
+
+export async function markAllNotificationsRead(userId: string) {
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .is('read_at', null)
+    .or(`delivery_status.eq.delivered,scheduled_at.lte.${new Date().toISOString()}`);
+
+  if (error) console.warn('Unable to mark notifications read', error.message);
+}
+
 async function scheduleRepeatingNotification(params: {
   title: string;
   body: string;
   time: string;
   data: Record<string, unknown>;
   weekday?: number;
+  kind: string;
+  route?: NotificationRoute;
 }) {
   if (isWithinQuietHours(params.time)) return;
 
@@ -165,18 +310,32 @@ async function scheduleRepeatingNotification(params: {
   if (!notifications) return;
 
   const { hour, minute } = parseTime(params.time);
+  const userId = useUserStore.getState().currentUserId;
+  const notificationRecord = await createNotificationRecord({
+    userId,
+    title: params.title,
+    body: params.body,
+    kind: params.kind,
+    route: params.route,
+    scheduledAt: nextScheduledAt(params.time, params.weekday),
+    metadata: params.data,
+  });
   const trigger = params.weekday
     ? ({ type: notifications.SchedulableTriggerInputTypes.WEEKLY, weekday: params.weekday, hour, minute } as const)
     : ({ type: notifications.SchedulableTriggerInputTypes.DAILY, hour, minute } as const);
 
-  await notifications.scheduleNotificationAsync({
+  const identifier = await notifications.scheduleNotificationAsync({
     content: {
       title: params.title,
       body: params.body,
-      data: params.data,
+      data: { ...params.data, userId, notificationId: notificationRecord?.id },
     },
     trigger,
   });
+
+  if (notificationRecord?.id) {
+    await supabase.from('notifications').update({ device_notification_id: identifier }).eq('id', notificationRecord.id);
+  }
 }
 
 export async function scheduleTaskNotification(params: {
@@ -202,15 +361,32 @@ export async function scheduleTaskNotification(params: {
 
   const triggerAt = new Date(year, month - 1, day, hour, minute);
   if (triggerAt.getTime() <= Date.now()) return false;
+  const userId = useUserStore.getState().currentUserId;
+  const body = params.notes || 'Your task is due now.';
+  const notificationRecord = await createNotificationRecord({
+    userId,
+    title: `Task time: ${params.title}`,
+    body,
+    kind: 'task_reminder',
+    route: '/(tabs)',
+    relatedEntityType: 'task',
+    relatedEntityId: params.taskId,
+    scheduledAt: triggerAt.toISOString(),
+    metadata: { action: 'taskReminder', taskId: params.taskId },
+  });
 
-  await notifications.scheduleNotificationAsync({
+  const identifier = await notifications.scheduleNotificationAsync({
     content: {
       title: `Task time: ${params.title}`,
-      body: params.notes || 'Your task is due now.',
-      data: { route: '/(tabs)', action: 'taskReminder', taskId: params.taskId },
+      body,
+      data: { route: '/(tabs)', action: 'taskReminder', taskId: params.taskId, userId, notificationId: notificationRecord?.id },
     },
     trigger: { type: notifications.SchedulableTriggerInputTypes.DATE, date: triggerAt },
   });
+
+  if (notificationRecord?.id) {
+    await supabase.from('notifications').update({ device_notification_id: identifier }).eq('id', notificationRecord.id);
+  }
 
   return true;
 }
@@ -269,6 +445,8 @@ export async function scheduleLifeOSNotifications() {
       body: brief,
       time: settings.notificationTimes.morning,
       data: { route: '/(tabs)', action: 'dailyHub' },
+      kind: 'daily_brief',
+      route: '/(tabs)',
     });
   }
 
@@ -278,6 +456,8 @@ export async function scheduleLifeOSNotifications() {
       body: `${caloriesRemaining} kcal remaining today`,
       time: settings.notificationTimes.lunch,
       data: { route: '/(tabs)/nutrition' },
+      kind: 'nutrition_reminder',
+      route: '/(tabs)/nutrition',
     });
   }
 
@@ -287,6 +467,8 @@ export async function scheduleLifeOSNotifications() {
       body: `${workoutLabel} is scheduled today`,
       time: settings.notificationTimes.workout,
       data: { route: '/(tabs)/gym' },
+      kind: 'workout_reminder',
+      route: '/(tabs)/gym',
     });
   }
 
@@ -296,6 +478,8 @@ export async function scheduleLifeOSNotifications() {
       body: 'How was today?',
       time: settings.notificationTimes.evening,
       data: { route: '/(tabs)?reflection=1', action: 'reflection' },
+      kind: 'evening_review',
+      route: '/(tabs)?reflection=1',
     });
   }
 
@@ -312,6 +496,8 @@ export async function scheduleLifeOSNotifications() {
       time: settings.notificationTimes.weekly,
       weekday: 1,
       data: { route: '/(tabs)/analytics', action: 'weeklyReview', weekly },
+      kind: 'weekly_summary',
+      route: '/(tabs)/analytics',
     });
   }
 
@@ -323,9 +509,44 @@ export function registerNotificationResponseHandler(router: RouterLike) {
   if (!notifications) return () => {};
 
   const subscription = notifications.addNotificationResponseReceivedListener((response) => {
-    const data = response.notification.request.content.data as { route?: NotificationRoute; action?: string };
+    const data = response.notification.request.content.data as { route?: NotificationRoute; action?: string; notificationId?: string };
+    void markNotificationDelivered(data.notificationId, response.notification.request.identifier);
     const route = data.route ?? '/(tabs)';
     router.push(route as never);
+  });
+
+  return () => subscription.remove();
+}
+
+export function registerNotificationReceivedHandler() {
+  const notifications = getNotifications();
+  if (!notifications) return () => {};
+
+  const subscription = notifications.addNotificationReceivedListener((notification) => {
+    const data = notification.request.content.data as {
+      notificationId?: string;
+      userId?: string;
+      route?: NotificationRoute;
+      action?: string;
+      taskId?: string;
+    };
+
+    void markNotificationDelivered(data.notificationId, notification.request.identifier);
+
+    if (!data.notificationId && data.userId) {
+      void createNotificationRecord({
+        userId: data.userId,
+        title: notification.request.content.title ?? 'LifeOS notification',
+        body: notification.request.content.body ?? 'Open LifeOS to review this update.',
+        kind: data.action ?? 'system',
+        route: data.route,
+        relatedEntityType: data.taskId ? 'task' : undefined,
+        relatedEntityId: data.taskId,
+        deliveredAt: new Date().toISOString(),
+        deliveryStatus: 'delivered',
+        metadata: data,
+      });
+    }
   });
 
   return () => subscription.remove();
@@ -353,16 +574,32 @@ async function runAnomalyCheck() {
     : [];
 
   await Promise.all(
-    alerts.map((alert) =>
-      notifications.scheduleNotificationAsync({
+    alerts.map(async (alert) => {
+      const userId = useUserStore.getState().currentUserId;
+      const notificationRecord = await createNotificationRecord({
+        userId,
+        title: alert.title ?? 'LifeOS alert',
+        body: alert.body ?? 'There is a pattern worth checking today.',
+        kind: 'ai_alert',
+        route: alert.route ?? '/(tabs)',
+        deliveredAt: new Date().toISOString(),
+        deliveryStatus: 'delivered',
+        metadata: alert,
+      });
+
+      const identifier = await notifications.scheduleNotificationAsync({
         content: {
           title: alert.title ?? 'LifeOS alert',
           body: alert.body ?? 'There is a pattern worth checking today.',
-          data: { route: alert.route ?? '/(tabs)' },
+          data: { route: alert.route ?? '/(tabs)', userId, notificationId: notificationRecord?.id },
         },
         trigger: null,
-      }),
-    ),
+      });
+
+      if (notificationRecord?.id) {
+        await supabase.from('notifications').update({ device_notification_id: identifier }).eq('id', notificationRecord.id);
+      }
+    }),
   );
 
   return alerts.length > 0 ? BackgroundFetch.BackgroundFetchResult.NewData : BackgroundFetch.BackgroundFetchResult.NoData;

@@ -55,6 +55,7 @@ export default function SettingsScreen() {
   const setNotificationTime = useSettingsStore((state) => state.setNotificationTime);
   const setAIModel = useSettingsStore((state) => state.setAIModel);
   const setAppLockEnabled = useSettingsStore((state) => state.setAppLockEnabled);
+  const profile = useUserStore((state) => state.profile);
   const resetAuth = useUserStore((state) => state.resetAuth);
 
   const [backupVisible, setBackupVisible] = useState(false);
@@ -140,6 +141,24 @@ export default function SettingsScreen() {
             <Ionicons name="notifications-outline" color={colors.violetLight} size={22} />
           </TouchableOpacity>
         </View>
+
+        <LifeOSCard>
+          <View style={styles.profileRow}>
+            <View style={styles.profileAvatar}>
+              <Text style={styles.profileAvatarText}>{(profile?.name?.charAt(0) || 'U').toUpperCase()}</Text>
+            </View>
+            <View style={styles.rowText}>
+              <Text style={styles.sectionTitle}>Profile</Text>
+              <Text style={styles.rowDetail}>
+                {profile?.name ?? 'User'} - {profile?.goal ?? 'LifeOS profile'}
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/profile' as never)} style={styles.secondaryButton}>
+            <Ionicons name="person-circle-outline" color={colors.textPrimary} size={18} />
+            <Text style={styles.secondaryText}>View and edit profile</Text>
+          </TouchableOpacity>
+        </LifeOSCard>
 
         <LifeOSCard>
           <Text style={styles.sectionTitle}>Notifications</Text>
@@ -291,6 +310,26 @@ const styles = StyleSheet.create({
     width: 44,
   },
   sectionTitle: { ...typography.h1, color: colors.textPrimary, marginBottom: spacing.sm },
+  profileRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  profileAvatar: {
+    alignItems: 'center',
+    backgroundColor: colors.violetBg,
+    borderColor: colors.violet,
+    borderRadius: 24,
+    borderWidth: 1,
+    height: 48,
+    justifyContent: 'center',
+    width: 48,
+  },
+  profileAvatarText: {
+    color: colors.violetLight,
+    fontSize: 20,
+    fontWeight: '800',
+  },
   row: {
     alignItems: 'center',
     borderBottomColor: colors.border,

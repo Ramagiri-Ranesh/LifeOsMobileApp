@@ -8,7 +8,11 @@ import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 import 'react-native-reanimated';
 
 import { colors } from '@/lib/design';
-import { registerLifeOSBackgroundTasks, registerNotificationResponseHandler } from '@/lib/notifications';
+import {
+  registerLifeOSBackgroundTasks,
+  registerNotificationReceivedHandler,
+  registerNotificationResponseHandler,
+} from '@/lib/notifications';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
 
@@ -69,6 +73,8 @@ function RootLayoutNav() {
 
   useEffect(() => registerNotificationResponseHandler(router), [router]);
 
+  useEffect(() => registerNotificationReceivedHandler(), []);
+
   useEffect(() => {
     void registerLifeOSBackgroundTasks();
   }, []);
@@ -119,6 +125,8 @@ function RootLayoutNav() {
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="ai-coach" options={{ presentation: 'modal' }} />
           <Stack.Screen name="finance" />
+          <Stack.Screen name="notifications" />
+          <Stack.Screen name="profile" />
         </Stack>
       )}
     </ThemeProvider>

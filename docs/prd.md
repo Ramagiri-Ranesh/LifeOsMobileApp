@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-LifeOS is a dark-mode personal tracking and planning app built with React Native, Expo Router, Zustand, and Supabase. The current product combines onboarding, daily planning, nutrition logging, gym tracking, goals, analytics, habits, AI coaching, notifications, app lock, and lightweight account login.
+LifeOS is a dark-mode personal tracking and planning app built with React Native, Expo Router, Zustand, and Supabase. The current product combines onboarding, editable profile management, daily planning, nutrition logging, gym tracking, goals, analytics, habits, AI coaching, persisted notifications, app lock, and lightweight account login.
 
 This PRD is based on the current repository structure and implementation. It does not assume the earlier prompt as truth. Where code references a feature but the schema or route is incomplete, that gap is documented explicitly.
 
@@ -81,6 +81,8 @@ Root stack:
 - `(tabs)`
 - `ai-coach` as modal
 - `finance`
+- `notifications`
+- `profile`
 
 Root redirect rules:
 
@@ -292,7 +294,9 @@ Purpose:
 
 Requirements:
 
-- Show greeting, name, date, avatar, Life Score, calories remaining, workout status, and task progress.
+- Show greeting, name, date, notification icon, tappable avatar, Life Score, calories remaining, workout status, and task progress.
+- Open the notification inbox from the home header and show unread count/badge when notifications are unread.
+- Open the editable profile from the home header avatar.
 - Build today's plan from meal logs and tasks.
 - Ensure today's workout task exists from the generated workout template.
 - Add tasks with date, time, priority, notes, and optional notification.
@@ -309,6 +313,7 @@ Primary data:
 - `tasks`
 - `water_log`
 - `meal_logs`
+- `notifications`
 - local `useNutritionStore`
 - local `useAnalyticsStore`
 - generated workout plan
@@ -527,6 +532,7 @@ Purpose:
 
 Requirements:
 
+- Show the current user profile entry and route to the editable profile screen.
 - Toggle notification types: morning, lunch, workout, evening, weekly, AI alerts.
 - Edit reminder times.
 - Toggle quiet hours.
@@ -541,8 +547,53 @@ Primary data:
 - Local `lifeos-settings` persisted Zustand store.
 - Local authentication APIs.
 - Expo notification scheduling.
+- `profiles`
 
-### 8.17 Finance Placeholder
+### 8.17 Profile
+
+Route: `app/profile.tsx`
+
+Purpose:
+
+- Show and edit the active user's LifeOS profile after onboarding.
+
+Requirements:
+
+- Open from the Home avatar and Settings profile section.
+- Show avatar initial, display name, username, calorie target, protein target, and gym-day target.
+- Toggle between read-only and edit mode.
+- Edit display name, gender, age, height, current weight, target weight, gym days, water target, goal, experience level, and meal timing.
+- Save edits to `profiles` and update the local `useUserStore` profile/onboarding target state.
+- Validate required display name and clamp gym days/water target to usable ranges.
+
+Primary data:
+
+- `profiles`
+- local `useUserStore`
+
+### 8.18 Notifications Inbox
+
+Route: `app/notifications.tsx`
+
+Purpose:
+
+- Display app-related notifications and reminder history in one inbox.
+
+Requirements:
+
+- Open from the Home notification icon.
+- Show total and unread counts.
+- Display task reminders, Daily Hub prompts, nutrition reminders, workout reminders, evening reviews, weekly summaries, and AI alerts.
+- Tap a notification to mark it read and route to the relevant app area when a route is stored.
+- Mark all unread notifications as read.
+- Pull to refresh.
+
+Primary data:
+
+- `notifications`
+- local `useUserStore`
+
+### 8.19 Finance Placeholder
 
 Route: `app/finance.tsx`
 
@@ -629,6 +680,7 @@ Responsibilities:
 | `water_log` | Created and constrained | Daily hydration by user/date |
 | `app_users` | Created | Custom username/password login linked to profile |
 | `tasks` | Created and indexed | Daily tasks and generated workout tasks |
+| `notifications` | Created and indexed | Persisted app notification inbox and reminder delivery state |
 | `workout_sessions` | Altered only | Workout history/session persistence expects table to pre-exist |
 | `workout_sets` | Altered only | Set history expects table to pre-exist |
 | `body_metrics` | Altered only | Body-weight metrics expects table to pre-exist |
@@ -666,6 +718,7 @@ Requirement:
 
 - `app_users.profile_id` references `profiles.id`.
 - `tasks.user_id` references `profiles.id`.
+- `notifications.user_id` references `profiles.id`.
 - `water_log.user_id` references `profiles.id`.
 - `workout_sessions.user_id`, `workout_sets.user_id`, and `body_metrics.user_id` are added as references to `profiles.id`.
 - Other referenced domain tables should include `user_id` and reference `profiles.id`, but creation migrations are not present.
@@ -738,6 +791,7 @@ Notification capabilities:
 - Weekly summary.
 - AI anomaly alerts.
 - Task-specific scheduled reminders.
+- Persisted in-app notification inbox with unread/read state.
 
 Background function:
 
@@ -748,6 +802,8 @@ Background function:
 
 Requirements:
 
+- Store scheduled and delivered app notifications in `notifications`.
+- Include notification route metadata so taps can deep-link to the relevant screen.
 - Align notification routes with Expo Router paths.
 - Respect quiet hours.
 - Avoid scheduling invalid times.
@@ -804,13 +860,15 @@ The current LifeOS MVP is acceptable when:
 - A new user can complete onboarding, reveal a plan, register, and land on Daily Hub.
 - A returning user can login and restore profile, targets, generated plan, and split.
 - Daily Hub can create/toggle tasks, sync water, show calories, show workout state, and generate/fallback a daily brief.
+- Home avatar opens editable Profile, and Home notification icon opens the persisted notification inbox.
 - Nutrition can add foods, log meal items, apply templates, delete items, and clone yesterday.
 - Gym can log sets, save sessions and sets, save optional body weight, complete workout task, and show workout history.
 - Goals can load and create weekly goals, break monthly goals into weekly goals, and log finance transactions.
 - Analytics loads real domain data when present and handles missing data deliberately.
 - Habits can create, log, unlog, and delete habits under the same user identity model as the rest of the app.
 - AI Coach can load context, send messages to the selected provider, persist messages, and handle provider failure.
-- Settings can schedule notifications, validate times, toggle app lock, export settings, change AI model, and logout.
+- Settings can open Profile, schedule notifications, validate times, toggle app lock, export settings, change AI model, and logout.
+- Notifications inbox can load persisted notifications, mark one/all as read, and route notification taps.
 - All user-owned data is protected by owner-scoped RLS or an equivalent access model.
 
 ## 17. Suggested Next PRD Decisions
