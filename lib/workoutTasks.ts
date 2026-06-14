@@ -79,9 +79,8 @@ export async function ensureTodayWorkoutTask(
 }
 
 export async function completeTodayWorkoutTask(workout: WorkoutTaskPlan, userId: string) {
-  const task = await ensureTodayWorkoutTask(workout, userId);
-  const taskId = asText(task?.id);
-  if (!taskId) return null;
+  if (!userId) return null;
+  if (workout.isRestDay || workout.exercises.length === 0) return null;
 
   const { data, error } = await supabase
     .from('tasks')
@@ -97,5 +96,5 @@ export async function completeTodayWorkoutTask(workout: WorkoutTaskPlan, userId:
     return null;
   }
 
-  return ((data ?? [])[0] ?? task) as LooseRow;
+  return ((data ?? [])[0] ?? null) as LooseRow | null;
 }

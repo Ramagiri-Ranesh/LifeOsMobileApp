@@ -515,32 +515,54 @@ export default function DailyHubScreen() {
     const updates: Array<PromiseLike<{ error: { message: string } | null }>> = [];
 
     if (weeklyGoalId) {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', currentUserId)
-        .eq('weekly_goal_id', weeklyGoalId);
+      const { data: goalRows, error: goalError } = await supabase
+        .from('weekly_goals')
+        .select('unit')
+        .eq('id', weeklyGoalId)
+        .limit(1);
+      const weeklyUnit = asText(((goalRows ?? []) as LooseRow[])[0]?.unit).toLowerCase();
 
-      if (error) {
-        console.warn('Unable to count weekly goal tasks', error.message);
-      } else {
-        const completedCount = ((data ?? []) as LooseRow[]).filter(isTaskDone).length;
-        updates.push(supabase.from('weekly_goals').update({ current_value: completedCount }).eq('id', weeklyGoalId));
+      if (goalError) {
+        console.warn('Unable to check weekly goal type', goalError.message);
+      } else if (!weeklyUnit.includes('session')) {
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('user_id', currentUserId)
+          .eq('weekly_goal_id', weeklyGoalId);
+
+        if (error) {
+          console.warn('Unable to count weekly goal tasks', error.message);
+        } else {
+          const completedCount = ((data ?? []) as LooseRow[]).filter(isTaskDone).length;
+          updates.push(supabase.from('weekly_goals').update({ current_value: completedCount }).eq('id', weeklyGoalId));
+        }
       }
     }
 
     if (monthlyGoalId) {
-      const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('user_id', currentUserId)
-        .eq('monthly_goal_id', monthlyGoalId);
+      const { data: goalRows, error: goalError } = await supabase
+        .from('monthly_goals')
+        .select('unit')
+        .eq('id', monthlyGoalId)
+        .limit(1);
+      const monthlyUnit = asText(((goalRows ?? []) as LooseRow[])[0]?.unit).toLowerCase();
 
-      if (error) {
-        console.warn('Unable to count monthly goal tasks', error.message);
-      } else {
-        const completedCount = ((data ?? []) as LooseRow[]).filter(isTaskDone).length;
-        updates.push(supabase.from('monthly_goals').update({ current_value: completedCount }).eq('id', monthlyGoalId));
+      if (goalError) {
+        console.warn('Unable to check monthly goal type', goalError.message);
+      } else if (!monthlyUnit.includes('session')) {
+        const { data, error } = await supabase
+          .from('tasks')
+          .select('*')
+          .eq('user_id', currentUserId)
+          .eq('monthly_goal_id', monthlyGoalId);
+
+        if (error) {
+          console.warn('Unable to count monthly goal tasks', error.message);
+        } else {
+          const completedCount = ((data ?? []) as LooseRow[]).filter(isTaskDone).length;
+          updates.push(supabase.from('monthly_goals').update({ current_value: completedCount }).eq('id', monthlyGoalId));
+        }
       }
     }
 

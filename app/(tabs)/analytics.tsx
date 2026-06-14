@@ -156,7 +156,9 @@ export default function AnalyticsScreen() {
         currentUserId
           ? supabase.from('body_metrics').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
           : supabase.from('body_metrics').select('*').limit(0),
-        supabase.from('finance_transactions').select('*').gte('date', startDate).lte('date', today),
+        currentUserId
+          ? supabase.from('finance_transactions').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
+          : supabase.from('finance_transactions').select('*').limit(0),
       ]);
 
       if (life.error) console.warn('Unable to load life scores', life.error.message);

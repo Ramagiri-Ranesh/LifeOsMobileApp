@@ -27,7 +27,7 @@ import Svg, { Circle, Ellipse, Path, Rect } from 'react-native-svg';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
-import { completeTodayWorkoutTask, ensureTodayWorkoutTask } from '@/lib/workoutTasks';
+import { completeTodayWorkoutTask } from '@/lib/workoutTasks';
 import { buildTodaysWorkoutTemplate, buildWorkoutTemplates, todayKey, type PlannedWorkoutTemplate } from '@/lib/workoutPlan';
 import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
@@ -258,11 +258,6 @@ export default function GymScreen() {
   useEffect(() => {
     void loadTodayWorkoutCompletion();
   }, [currentUserId, defaultTemplate.id]);
-
-  useEffect(() => {
-    if (!profile || !currentUserId) return;
-    void ensureTodayWorkoutTask(defaultTemplate, currentUserId);
-  }, [currentUserId, defaultTemplate, profile]);
 
   useEffect(() => {
     if (startedAt || setTotals.done > 0) return;

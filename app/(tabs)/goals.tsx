@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,10 +21,11 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 import { colors, radii, shadows, spacing, typography } from '@/lib/design';
 import { scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
-import { useUserStore } from '@/stores/useUserStore';
+import { buildWorkoutTemplates, type PlannedWorkoutTemplate } from '@/lib/workoutPlan';
+import { useUserStore, type GeneratedPlan, type UserProfile } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
 
-type GoalsTab = 'week' | 'month' | 'finance';
+type GoalsTab = 'week' | 'month';
 type GoalFormType = 'monthly' | 'weekly' | 'daily';
 type LooseRow = Record<string, Json | undefined>;
 
@@ -65,6 +66,9 @@ type DailyGoal = {
   weeklyGoalId: string;
   title: string;
   date: string;
+  time: string;
+  priority: string;
+  notes: string;
   completed: boolean;
 };
 
@@ -82,12 +86,12 @@ type GoalDraft = {
   priority: string;
   notes: string;
   notify: boolean;
+  editTaskId: string;
 };
 
 const TABS: { id: GoalsTab; label: string }[] = [
   { id: 'week', label: 'This Week' },
   { id: 'month', label: 'This Month' },
-  { id: 'finance', label: 'Finance' },
 ];
 
 const DEFAULT_CATEGORIES = [
@@ -95,6 +99,10 @@ const DEFAULT_CATEGORIES = [
   { name: 'Work', color: colors.blue, icon: 'briefcase-outline' },
   { name: 'Health', color: colors.emerald, icon: 'fitness-outline' },
 ];
+
+const GYM_CATEGORY = { name: 'Gym', color: colors.amber, icon: 'barbell-outline' };
+const GYM_MONTHLY_TITLE = 'Gym sessions';
+const GYM_WEEKLY_TITLE = 'Gym sessions this week';
 
 const priorityOptions = ['low', 'medium', 'high'];
 
@@ -124,6 +132,12 @@ function todayKey() {
   return dateKey(new Date());
 }
 
+function dateFromKey(key: string) {
+  const [year, month, day] = key.split('-').map(Number);
+  if (!year || !month || !day) return new Date();
+  return new Date(year, month - 1, day);
+}
+
 function nextHourTime() {
   const date = new Date();
   date.setHours(date.getHours() + 1, 0, 0, 0);
@@ -139,6 +153,26 @@ function formatTaskTime(time: string) {
   const suffix = hour >= 12 ? 'PM' : 'AM';
   const hour12 = hour % 12 || 12;
   return `${hour12}:${`${minute}`.padStart(2, '0')} ${suffix}`;
+}
+
+function parseTaskTime(value: string) {
+  const trimmed = value.trim();
+  const displayMatch = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (displayMatch) {
+    let hour = Number(displayMatch[1]);
+    const minute = Number(displayMatch[2]);
+    const suffix = displayMatch[3].toUpperCase();
+    if (suffix === 'PM' && hour < 12) hour += 12;
+    if (suffix === 'AM' && hour === 12) hour = 0;
+    return `${`${hour}`.padStart(2, '0')}:${`${minute}`.padStart(2, '0')}`;
+  }
+
+  const storageMatch = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (storageMatch) {
+    return `${storageMatch[1].padStart(2, '0')}:${storageMatch[2]}`;
+  }
+
+  return nextHourTime();
 }
 
 function adjustTaskTime(time: string, minutesToAdd: number) {
@@ -160,6 +194,10 @@ function toggleMeridiem(time: string) {
 
 function monthStartKey(date = new Date()) {
   return dateKey(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+function monthEndKey(date = new Date()) {
+  return dateKey(new Date(date.getFullYear(), date.getMonth() + 1, 0));
 }
 
 function weekStartDate(offset = 0, base = new Date()) {
@@ -227,7 +265,7 @@ function weeklyFromRow(row: LooseRow, index: number): WeeklyGoal {
   return {
     id: rowId(row, `weekly-${index}`),
     categoryId: asText(row.category_id),
-    monthlyGoalId: asText(row.monthly_goal_id),
+    monthlyGoalId: asText(row.monthly_goal_id, asText(row.linked_monthly_goal_id)),
     title: asText(row.title, 'Weekly goal'),
     targetValue: asNumber(row.target_value, asNumber(row.target, 1)),
     currentValue: asNumber(row.current_value, asNumber(row.progress_current, asNumber(row.completed, 0))),
@@ -245,6 +283,9 @@ function dailyFromRow(row: LooseRow, index: number): DailyGoal {
     weeklyGoalId: asText(row.weekly_goal_id),
     title: asText(row.title, 'Daily task'),
     date: asText(row.date).slice(0, 10) || todayKey(),
+    time: asText(row.time_block, asText(row.time)),
+    priority: asText(row.priority, 'medium'),
+    notes: asText(row.notes),
     completed: row.completed === true || row.done === true || status === 'done' || status === 'completed',
   };
 }
@@ -291,9 +332,339 @@ async function ensureDefaultCategories(userId: string) {
   return existing;
 }
 
+function rangeDateKeys(startKey: string, endKey: string) {
+  const dates: string[] = [];
+  const cursor = dateFromKey(startKey);
+  const end = dateFromKey(endKey);
+
+  while (cursor <= end) {
+    dates.push(dateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
+}
+
+function plannedWorkoutCount(
+  generatedPlan: GeneratedPlan | null | undefined,
+  profile: UserProfile | null | undefined,
+  startKey: string,
+  endKey: string,
+) {
+  const templates = buildWorkoutTemplates(generatedPlan, profile);
+  const count = rangeDateKeys(startKey, endKey).filter((key) => {
+    const [year, month, day] = key.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    const index = (date.getDay() + 6) % 7;
+    const template = templates[index];
+    return template && !template.isRestDay && template.exercises.length > 0;
+  }).length;
+
+  return Math.max(1, count || Math.round(profile?.gymDaysPerWeek ?? 0) || 1);
+}
+
+async function completedWorkoutDates(userId: string, startKey: string, endKey: string) {
+  const { data, error } = await supabase
+    .from('workout_sessions')
+    .select('date')
+    .eq('user_id', userId)
+    .gte('date', startKey)
+    .lte('date', endKey);
+
+  if (error) {
+    console.warn('Unable to count workout sessions', error.message);
+    return new Set<string>();
+  }
+
+  return new Set(((data ?? []) as LooseRow[]).map((row) => asText(row.date).slice(0, 10)).filter(Boolean));
+}
+
+async function completedWorkoutCount(userId: string, startKey: string, endKey: string) {
+  return (await completedWorkoutDates(userId, startKey, endKey)).size;
+}
+
+async function completedFitnessTaskCount(userId: string, startKey: string, endKey: string, weeklyGoalId?: string) {
+  let query = supabase
+    .from('tasks')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('category', 'fitness')
+    .eq('completed', true)
+    .gte('date', startKey)
+    .lte('date', endKey);
+
+  if (weeklyGoalId) {
+    query = query.eq('weekly_goal_id', weeklyGoalId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.warn('Unable to count completed gym tasks', error.message);
+    return 0;
+  }
+
+  return (data ?? []).length;
+}
+
+function workoutTaskTitle(workout: PlannedWorkoutTemplate) {
+  return `Workout: ${workout.name}`;
+}
+
+function plannedWorkoutTasks(
+  generatedPlan: GeneratedPlan | null | undefined,
+  profile: UserProfile | null | undefined,
+  startKey: string,
+  endKey: string,
+) {
+  const templates = buildWorkoutTemplates(generatedPlan, profile);
+  return rangeDateKeys(startKey, endKey)
+    .map((date) => {
+      const day = dateFromKey(date);
+      const template = templates[(day.getDay() + 6) % 7];
+      return { date, template };
+    })
+    .filter(({ template }) => template && !template.isRestDay && template.exercises.length > 0);
+}
+
+async function ensurePlannedWorkoutTasks(args: {
+  userId: string;
+  categoryId: string;
+  monthlyGoalId: string;
+  weeklyGoalId: string;
+  generatedPlan: GeneratedPlan | null;
+  profile: UserProfile | null;
+  weekStart: string;
+  weekEnd: string;
+}) {
+  const plannedTasks = plannedWorkoutTasks(args.generatedPlan, args.profile, args.weekStart, args.weekEnd);
+  if (plannedTasks.length === 0) return;
+
+  const [existingResult, completedDates] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('*')
+      .eq('user_id', args.userId)
+      .eq('category', 'fitness')
+      .gte('date', args.weekStart)
+      .lte('date', args.weekEnd),
+    completedWorkoutDates(args.userId, args.weekStart, args.weekEnd),
+  ]);
+
+  if (existingResult.error) {
+    console.warn('Unable to read planned workout tasks', existingResult.error.message);
+    return;
+  }
+
+  const existingRows = (existingResult.data ?? []) as LooseRow[];
+  const inserts: Array<Record<string, Json | undefined>> = [];
+  const updates: Array<PromiseLike<{ error: { message: string } | null }>> = [];
+
+  plannedTasks.forEach(({ date, template }) => {
+    const title = workoutTaskTitle(template);
+    const existing = existingRows.find((row) => asText(row.date).slice(0, 10) === date && asText(row.title) === title);
+    const completedFromWorkout = completedDates.has(date);
+
+    if (existing) {
+      const payload: Record<string, Json | undefined> = {
+        category_id: args.categoryId,
+        monthly_goal_id: args.monthlyGoalId,
+        weekly_goal_id: args.weeklyGoalId,
+      };
+      if (completedFromWorkout && existing.completed !== true) payload.completed = true;
+
+      updates.push(
+        supabase
+          .from('tasks')
+          .update(payload)
+          .eq('id', rowId(existing, ''))
+          .eq('user_id', args.userId),
+      );
+      return;
+    }
+
+    inserts.push({
+      user_id: args.userId,
+      title,
+      date,
+      time_block: '6:30 PM',
+      completed: completedFromWorkout,
+      priority: 'medium',
+      category: 'fitness',
+      category_id: args.categoryId,
+      monthly_goal_id: args.monthlyGoalId,
+      weekly_goal_id: args.weeklyGoalId,
+      notes: `Profile split: ${template.splitName}`,
+    });
+  });
+
+  const results = await Promise.all(updates);
+  results.forEach((result) => {
+    const error = 'error' in result ? result.error : null;
+    if (error) console.warn('Unable to link planned workout task', error.message);
+  });
+
+  if (inserts.length > 0) {
+    const { error } = await supabase.from('tasks').insert(inserts);
+    if (error) console.warn('Unable to create planned workout tasks', error.message);
+  }
+}
+
+async function ensureGymCategory(userId: string, categories: GoalCategory[]) {
+  const existing = categories.find((category) => category.name.trim().toLowerCase() === GYM_CATEGORY.name.toLowerCase());
+  if (existing) return { category: existing, categories };
+
+  const { data, error } = await supabase
+    .from('goal_categories')
+    .insert({
+      user_id: userId,
+      name: GYM_CATEGORY.name,
+      color: GYM_CATEGORY.color,
+      icon: GYM_CATEGORY.icon,
+      sort_order: categories.length,
+    })
+    .select('*')
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  const category = categoryFromRow(data as LooseRow, categories.length);
+  return {
+    category,
+    categories: [...categories, category].sort((a, b) => a.sortOrder - b.sortOrder),
+  };
+}
+
+async function ensureGymGoalFlow(args: {
+  userId: string;
+  profile: UserProfile | null;
+  generatedPlan: GeneratedPlan | null;
+  categories: GoalCategory[];
+  weekStart: string;
+}) {
+  const gymDays = Math.round(args.profile?.gymDaysPerWeek ?? 0);
+  if (gymDays <= 0) return args.categories;
+
+  const { category, categories } = await ensureGymCategory(args.userId, args.categories);
+  const monthStart = monthStartKey();
+  const monthEnd = monthEndKey();
+  const weekEnd = dateKey(addDays(dateFromKey(args.weekStart), 6));
+  const monthlyTarget = plannedWorkoutCount(args.generatedPlan, args.profile, monthStart, monthEnd);
+  const weeklyTarget = plannedWorkoutCount(args.generatedPlan, args.profile, args.weekStart, weekEnd);
+  const [monthlyWorkoutCompleted, weeklyWorkoutCompleted] = await Promise.all([
+    completedWorkoutCount(args.userId, monthStart, monthEnd),
+    completedWorkoutCount(args.userId, args.weekStart, weekEnd),
+  ]);
+
+  const { data: monthlyRows, error: monthlyReadError } = await supabase
+    .from('monthly_goals')
+    .select('*')
+    .eq('user_id', args.userId)
+    .eq('category_id', category.id)
+    .eq('month_start', monthStart)
+    .eq('title', GYM_MONTHLY_TITLE)
+    .limit(1);
+
+  if (monthlyReadError) throw new Error(monthlyReadError.message);
+
+  let monthlyGoal = ((monthlyRows ?? []) as LooseRow[])[0];
+  const monthlyPayload = {
+    user_id: args.userId,
+    category_id: category.id,
+    category: category.name,
+    title: GYM_MONTHLY_TITLE,
+    target_value: monthlyTarget,
+    current_value: monthlyWorkoutCompleted,
+    unit: 'sessions',
+    month_start: monthStart,
+    status: 'active',
+  };
+
+  if (monthlyGoal) {
+    const { error } = await supabase.from('monthly_goals').update(monthlyPayload).eq('id', rowId(monthlyGoal, ''));
+    if (error) throw new Error(error.message);
+  } else {
+    const { data, error } = await supabase.from('monthly_goals').insert(monthlyPayload).select('*').single();
+    if (error) throw new Error(error.message);
+    monthlyGoal = data as LooseRow;
+  }
+
+  const monthlyGoalId = rowId(monthlyGoal, '');
+  if (!monthlyGoalId) return categories;
+
+  const { data: weeklyRows, error: weeklyReadError } = await supabase
+    .from('weekly_goals')
+    .select('*')
+    .eq('user_id', args.userId)
+    .eq('category_id', category.id)
+    .eq('week_start', args.weekStart)
+    .eq('title', GYM_WEEKLY_TITLE)
+    .limit(1);
+
+  if (weeklyReadError) throw new Error(weeklyReadError.message);
+
+  let weeklyGoal = ((weeklyRows ?? []) as LooseRow[])[0];
+  const weeklyPayload = {
+    user_id: args.userId,
+    category_id: category.id,
+    category: category.name,
+    monthly_goal_id: monthlyGoalId,
+    linked_monthly_goal_id: monthlyGoalId,
+    title: GYM_WEEKLY_TITLE,
+    target_value: weeklyTarget,
+    current_value: weeklyWorkoutCompleted,
+    unit: 'sessions',
+    week_start: args.weekStart,
+    week_number: weekNumberFromKey(args.weekStart),
+  };
+
+  if (weeklyGoal) {
+    const { error } = await supabase.from('weekly_goals').update(weeklyPayload).eq('id', rowId(weeklyGoal, ''));
+    if (error) throw new Error(error.message);
+  } else {
+    const { data, error } = await supabase.from('weekly_goals').insert(weeklyPayload).select('*').single();
+    if (error) throw new Error(error.message);
+    weeklyGoal = data as LooseRow;
+  }
+
+  const weeklyGoalId = rowId(weeklyGoal, '');
+  if (weeklyGoalId) {
+    await ensurePlannedWorkoutTasks({
+      userId: args.userId,
+      categoryId: category.id,
+      monthlyGoalId,
+      weeklyGoalId,
+      generatedPlan: args.generatedPlan,
+      profile: args.profile,
+      weekStart: args.weekStart,
+      weekEnd,
+    });
+
+    const [monthlyTaskCompleted, weeklyTaskCompleted] = await Promise.all([
+      completedFitnessTaskCount(args.userId, monthStart, monthEnd),
+      completedFitnessTaskCount(args.userId, args.weekStart, weekEnd, weeklyGoalId),
+    ]);
+    const monthlyCompleted = Math.max(monthlyWorkoutCompleted, monthlyTaskCompleted);
+    const weeklyCompleted = Math.max(weeklyWorkoutCompleted, weeklyTaskCompleted);
+
+    const [monthlyUpdate, weeklyUpdate] = await Promise.all([
+      supabase.from('monthly_goals').update({ current_value: monthlyCompleted }).eq('id', monthlyGoalId),
+      supabase.from('weekly_goals').update({ current_value: weeklyCompleted }).eq('id', weeklyGoalId),
+    ]);
+
+    if (monthlyUpdate.error) console.warn('Unable to sync gym monthly progress', monthlyUpdate.error.message);
+    if (weeklyUpdate.error) console.warn('Unable to sync gym weekly progress', weeklyUpdate.error.message);
+  }
+
+  return categories;
+}
+
 export default function GoalsScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const currentUserId = useUserStore((state) => state.currentUserId);
+  const profile = useUserStore((state) => state.profile);
+  const generatedPlan = useUserStore((state) => state.generatedPlan);
   const [activeTab, setActiveTab] = useState<GoalsTab>('week');
   const [weekOffset, setWeekOffset] = useState(0);
   const [categories, setCategories] = useState<GoalCategory[]>([]);
@@ -318,6 +689,7 @@ export default function GoalsScreen() {
     priority: 'medium',
     notes: '',
     notify: false,
+    editTaskId: '',
   });
 
   const categoryById = useMemo(() => {
@@ -340,7 +712,15 @@ export default function GoalsScreen() {
     setError('');
 
     try {
-      const nextCategories = await ensureDefaultCategories(currentUserId);
+      const baseCategories = await ensureDefaultCategories(currentUserId);
+      const weekStart = dateKey(weekStartDate(weekOffset));
+      const nextCategories = await ensureGymGoalFlow({
+        userId: currentUserId,
+        profile,
+        generatedPlan,
+        categories: baseCategories,
+        weekStart,
+      });
       const [monthlyResult, weeklyResult, dailyResult] = await Promise.all([
         supabase.from('monthly_goals').select('*').eq('user_id', currentUserId).order('created_at', { ascending: false }),
         supabase.from('weekly_goals').select('*').eq('user_id', currentUserId).order('week_start', { ascending: false }),
@@ -365,7 +745,7 @@ export default function GoalsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [currentUserId]);
+  }, [currentUserId, generatedPlan, profile, weekOffset]);
 
   useEffect(() => {
     void loadGoals();
@@ -408,6 +788,7 @@ export default function GoalsScreen() {
 
   const weeklyProgress = useCallback(
     (goal: WeeklyGoal) => {
+      if (goal.unit.toLowerCase().includes('session')) return percentage(goal.currentValue, goal.targetValue);
       const tasks = tasksByWeeklyGoal.get(goal.id) ?? [];
       if (tasks.length > 0) return percentage(tasks.filter((task) => task.completed).length, tasks.length);
       return percentage(goal.currentValue, goal.targetValue);
@@ -417,6 +798,7 @@ export default function GoalsScreen() {
 
   const monthlyProgress = useCallback(
     (goal: MonthlyGoal) => {
+      if (goal.unit.toLowerCase().includes('session')) return percentage(goal.currentValue, goal.targetValue);
       const tasks = tasksByMonthlyGoal.get(goal.id) ?? [];
       if (tasks.length > 0) return percentage(tasks.filter((task) => task.completed).length, tasks.length);
 
@@ -465,10 +847,37 @@ export default function GoalsScreen() {
         priority: 'medium',
         notes: '',
         notify: false,
+        editTaskId: '',
       });
       setAddVisible(true);
     },
     [categories],
+  );
+
+  const openEditDailyTask = useCallback(
+    (task: DailyGoal) => {
+      const weeklyGoal = weeklyGoals.find((goal) => goal.id === task.weeklyGoalId);
+      const monthlyGoal = monthlyGoals.find((goal) => goal.id === task.monthlyGoalId || goal.id === weeklyGoal?.monthlyGoalId);
+
+      setDraft({
+        type: 'daily',
+        title: task.title,
+        target: '',
+        unit: '',
+        categoryId: task.categoryId || weeklyGoal?.categoryId || monthlyGoal?.categoryId || categories[0]?.id || '',
+        newCategoryName: '',
+        parentMonthlyGoalId: task.monthlyGoalId || weeklyGoal?.monthlyGoalId || '',
+        parentWeeklyGoalId: task.weeklyGoalId,
+        date: task.date || todayKey(),
+        time: parseTaskTime(task.time),
+        priority: task.priority || 'medium',
+        notes: task.notes || '',
+        notify: false,
+        editTaskId: task.id,
+      });
+      setAddVisible(true);
+    },
+    [categories, monthlyGoals, weeklyGoals],
   );
 
   const resolveCategoryId = useCallback(async () => {
@@ -544,6 +953,10 @@ export default function GoalsScreen() {
       const categoryName = categoryById.get(categoryId)?.name || null;
       const targetValue = Math.max(1, Number(draft.target) || 1);
       const unit = draft.unit.trim() || 'items';
+      const isSessionGoal =
+        selectedWeekly?.unit.toLowerCase().includes('session') ||
+        selectedMonthly?.unit.toLowerCase().includes('session') ||
+        categoryName?.toLowerCase() === 'gym';
 
       if (draft.type === 'monthly') {
         const { error: insertError } = await supabase.from('monthly_goals').insert({
@@ -561,11 +974,13 @@ export default function GoalsScreen() {
       }
 
       if (draft.type === 'weekly') {
+        const parentMonthlyGoalId = selectedMonthly?.id || null;
         const { error: insertError } = await supabase.from('weekly_goals').insert({
           user_id: currentUserId,
           category_id: categoryId || null,
           category: categoryName,
-          monthly_goal_id: selectedMonthly?.id || null,
+          monthly_goal_id: parentMonthlyGoalId,
+          linked_monthly_goal_id: parentMonthlyGoalId,
           title,
           target_value: targetValue,
           current_value: 0,
@@ -582,20 +997,36 @@ export default function GoalsScreen() {
           throw new Error('Use task date as YYYY-MM-DD.');
         }
 
-        const { data, error: insertError } = await supabase.from('tasks').insert({
+        const taskPayload = {
           user_id: currentUserId,
           title,
           date,
           time_block: formatTaskTime(draft.time),
-          completed: false,
           priority: draft.priority,
           notes: draft.notes.trim() || null,
-          category: 'goals',
+          category: isSessionGoal ? 'fitness' : 'goals',
           category_id: categoryId || null,
           weekly_goal_id: selectedWeekly?.id || null,
           monthly_goal_id: selectedWeekly?.monthlyGoalId || selectedMonthly?.id || null,
-        }).select('*').single();
-        if (insertError) throw new Error(insertError.message);
+        };
+
+        const { data, error: taskError } = draft.editTaskId
+          ? await supabase
+              .from('tasks')
+              .update(taskPayload)
+              .eq('id', draft.editTaskId)
+              .eq('user_id', currentUserId)
+              .select('*')
+              .single()
+          : await supabase
+              .from('tasks')
+              .insert({
+                ...taskPayload,
+                completed: false,
+              })
+              .select('*')
+              .single();
+        if (taskError) throw new Error(taskError.message);
 
         if (draft.notify) {
           const scheduled = await scheduleTaskNotification({
@@ -652,9 +1083,16 @@ export default function GoalsScreen() {
         return;
       }
 
+      const linkedWeekly = weeklyGoals.find((goal) => goal.id === task.weeklyGoalId);
+      const linkedMonthly = monthlyGoals.find((goal) => goal.id === task.monthlyGoalId);
+      if (linkedWeekly?.unit.toLowerCase().includes('session') || linkedMonthly?.unit.toLowerCase().includes('session')) {
+        await loadGoals();
+        return;
+      }
+
       await syncLinkedGoalProgress(nextRows, task.weeklyGoalId, task.monthlyGoalId);
     },
-    [currentUserId, dailyGoals, syncLinkedGoalProgress],
+    [currentUserId, dailyGoals, loadGoals, monthlyGoals, syncLinkedGoalProgress, weeklyGoals],
   );
 
   const renderTabs = () => (
@@ -678,12 +1116,26 @@ export default function GoalsScreen() {
     </View>
   );
 
+  const renderFinanceShortcut = () => (
+    <TouchableOpacity style={styles.financeShortcut} onPress={() => router.push('/finance')}>
+      <View style={styles.financeShortcutIcon}>
+        <Ionicons name="wallet-outline" size={21} color={colors.emeraldLight} />
+      </View>
+      <View style={styles.financeShortcutCopy}>
+        <Text style={styles.financeShortcutTitle}>Finance</Text>
+        <Text style={styles.financeShortcutText}>Track spending, budgets, and recent transactions.</Text>
+      </View>
+      <Ionicons name="arrow-forward" size={18} color={colors.textSecondary} />
+    </TouchableOpacity>
+  );
+
   const renderWeeklyGoal = (goal: WeeklyGoal) => {
     const category = categoryById.get(goal.categoryId);
     const accent = category?.color || colors.violet;
     const linkedTasks = tasksByWeeklyGoal.get(goal.id) ?? [];
     const progress = weeklyProgress(goal);
     const parent = monthlyGoals.find((monthly) => monthly.id === goal.monthlyGoalId);
+    const isSessionGoal = goal.unit.toLowerCase().includes('session');
 
     return (
       <View key={goal.id} style={styles.goalCard}>
@@ -704,28 +1156,43 @@ export default function GoalsScreen() {
         </View>
         <View style={styles.goalFooter}>
           <Text style={styles.goalMeta}>
-            {linkedTasks.length > 0
+            {isSessionGoal
+              ? `${goal.currentValue} of ${goal.targetValue} ${goal.unit}`
+              : linkedTasks.length > 0
               ? `${linkedTasks.filter((task) => task.completed).length} of ${linkedTasks.length} daily tasks`
               : `${goal.currentValue} of ${goal.targetValue} ${goal.unit}`}
           </Text>
-          <TouchableOpacity style={styles.inlineAction} onPress={() => openAddGoal('daily', { weeklyGoal: goal })}>
-            <Ionicons name="add" size={15} color={colors.blueLight} />
-            <Text style={styles.inlineActionText}>Daily task</Text>
-          </TouchableOpacity>
+          {!isSessionGoal ? (
+            <TouchableOpacity style={styles.inlineAction} onPress={() => openAddGoal('daily', { weeklyGoal: goal })}>
+              <Ionicons name="add" size={15} color={colors.blueLight} />
+              <Text style={styles.inlineActionText}>Daily task</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
         {linkedTasks.length > 0 ? (
           <View style={styles.taskList}>
             {linkedTasks.map((task) => (
-              <TouchableOpacity key={task.id} style={styles.taskRow} onPress={() => void toggleDailyGoal(task)}>
-                <Ionicons
-                  name={task.completed ? 'checkmark-circle' : 'ellipse-outline'}
-                  size={18}
-                  color={task.completed ? colors.emerald : colors.textMuted}
-                />
+              <TouchableOpacity key={task.id} style={styles.taskRow} onPress={() => openEditDailyTask(task)}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    void toggleDailyGoal(task);
+                  }}>
+                  <Ionicons
+                    name={task.completed ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={18}
+                    color={task.completed ? colors.emerald : colors.textMuted}
+                  />
+                </TouchableOpacity>
                 <View style={styles.taskCopy}>
                   <Text style={[styles.taskTitle, task.completed && styles.completedText]}>{task.title}</Text>
-                  <Text style={styles.goalMeta}>{task.date}</Text>
+                  <Text style={styles.goalMeta}>
+                    {task.date}{task.time ? ` · ${task.time}` : ''}
+                  </Text>
                 </View>
+                <Ionicons name="create-outline" size={15} color={colors.textMuted} />
               </TouchableOpacity>
             ))}
           </View>
@@ -836,6 +1303,7 @@ export default function GoalsScreen() {
                     const linkedWeekly = weeklyGoals.filter((weekly) => weekly.monthlyGoalId === goal.id);
                     const linkedTasks = tasksByMonthlyGoal.get(goal.id) ?? [];
                     const progress = monthlyProgress(goal);
+                    const isSessionGoal = goal.unit.toLowerCase().includes('session');
 
                     return (
                       <View key={goal.id} style={styles.goalCard}>
@@ -843,7 +1311,9 @@ export default function GoalsScreen() {
                           <View style={styles.goalHeaderCopy}>
                             <Text style={styles.goalTitle}>{goal.title}</Text>
                             <Text style={styles.goalMeta}>
-                              {linkedWeekly.length} weekly goals · {linkedTasks.length} daily tasks
+                              {isSessionGoal
+                                ? `${goal.currentValue} of ${goal.targetValue} ${goal.unit}`
+                                : `${linkedWeekly.length} weekly goals · ${linkedTasks.length} daily tasks`}
                             </Text>
                           </View>
                           <Text style={styles.progressText}>{progress}%</Text>
@@ -860,10 +1330,12 @@ export default function GoalsScreen() {
                             ))}
                           </View>
                         ) : null}
-                        <TouchableOpacity style={styles.primaryInlineButton} onPress={() => openAddGoal('weekly', { monthlyGoal: goal })}>
-                          <Ionicons name="git-branch-outline" size={16} color={colors.textPrimary} />
-                          <Text style={styles.primaryInlineButtonText}>Break into week</Text>
-                        </TouchableOpacity>
+                        {!isSessionGoal ? (
+                          <TouchableOpacity style={styles.primaryInlineButton} onPress={() => openAddGoal('weekly', { monthlyGoal: goal })}>
+                            <Ionicons name="git-branch-outline" size={16} color={colors.textPrimary} />
+                            <Text style={styles.primaryInlineButtonText}>Break into week</Text>
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
                     );
                   })}
@@ -873,9 +1345,6 @@ export default function GoalsScreen() {
           })}
     </>
   );
-
-  const renderFinance = () =>
-    renderEmpty('Finance is clean', 'Dummy transactions were removed. We can connect finance again after the goal flow is stable.');
 
   const addLabel = activeTab === 'month' ? 'Add monthly goal' : 'Add weekly goal';
 
@@ -889,7 +1358,7 @@ export default function GoalsScreen() {
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <View style={styles.sheet}>
             <View style={styles.sheetHeader}>
-              <Text style={styles.modalTitle}>{draft.type === 'daily' ? 'Add task' : 'Add goal'}</Text>
+              <Text style={styles.modalTitle}>{draft.editTaskId ? 'Edit task' : draft.type === 'daily' ? 'Add task' : 'Add goal'}</Text>
               <TouchableOpacity onPress={() => setAddVisible(false)}>
                 <Ionicons name="close" size={22} color={colors.textSecondary} />
               </TouchableOpacity>
@@ -900,18 +1369,20 @@ export default function GoalsScreen() {
               showsVerticalScrollIndicator={false}
               style={styles.sheetScroll}
               contentContainerStyle={styles.sheetScrollContent}>
-            <View style={styles.choiceRow}>
-              {(['monthly', 'weekly', 'daily'] as GoalFormType[]).map((type) => (
-                <TouchableOpacity
-                  key={type}
-                  style={[styles.choiceChip, draft.type === type && styles.choiceChipActive]}
-                  onPress={() => setDraft((value) => ({ ...value, type }))}>
-                  <Text style={[styles.choiceText, draft.type === type && styles.choiceTextActive]}>
-                    {type === 'daily' ? 'Daily task' : `${type[0].toUpperCase()}${type.slice(1)}`}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            {!draft.editTaskId ? (
+              <View style={styles.choiceRow}>
+                {(['monthly', 'weekly', 'daily'] as GoalFormType[]).map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[styles.choiceChip, draft.type === type && styles.choiceChipActive]}
+                    onPress={() => setDraft((value) => ({ ...value, type }))}>
+                    <Text style={[styles.choiceText, draft.type === type && styles.choiceTextActive]}>
+                      {type === 'daily' ? 'Daily task' : `${type[0].toUpperCase()}${type.slice(1)}`}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
 
             {draft.type === 'daily' ? (
               <>
@@ -1130,7 +1601,9 @@ export default function GoalsScreen() {
             )}
 
             <TouchableOpacity disabled={saving} style={[styles.primaryButton, saving && styles.disabledButton]} onPress={() => void saveGoal()}>
-              <Text style={styles.primaryButtonText}>{saving ? 'Saving...' : draft.type === 'daily' ? 'Save task' : 'Save'}</Text>
+              <Text style={styles.primaryButtonText}>
+                {saving ? 'Saving...' : draft.editTaskId ? 'Update task' : draft.type === 'daily' ? 'Save task' : 'Save'}
+              </Text>
             </TouchableOpacity>
             </ScrollView>
           </View>
@@ -1152,6 +1625,7 @@ export default function GoalsScreen() {
         </View>
 
         {renderTabs()}
+        {renderFinanceShortcut()}
 
         {loading ? (
           <View style={styles.loadingCard}>
@@ -1172,12 +1646,11 @@ export default function GoalsScreen() {
           <>
             {activeTab === 'week' ? renderWeekly() : null}
             {activeTab === 'month' ? renderMonthly() : null}
-            {activeTab === 'finance' ? renderFinance() : null}
           </>
         )}
       </ScrollView>
 
-      {!loading && !error && activeTab !== 'finance' ? (
+      {!loading && !error ? (
         <TouchableOpacity
           style={[styles.fab, { bottom: insets.bottom + 78 }]}
           onPress={() => openAddGoal(activeTab === 'month' ? 'monthly' : 'weekly')}>
@@ -1209,6 +1682,29 @@ const styles = StyleSheet.create({
   tabPillActive: { backgroundColor: colors.violet },
   tabText: { ...typography.labelCaps, color: colors.textSecondary, textAlign: 'center' },
   tabTextActive: { color: colors.textPrimary },
+  financeShortcut: {
+    alignItems: 'center',
+    backgroundColor: colors.surface1,
+    borderColor: colors.borderLight,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  financeShortcutIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.emeraldBg,
+    borderColor: `${colors.emeraldLight}55`,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  financeShortcutCopy: { flex: 1, gap: 2 },
+  financeShortcutTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '800' },
+  financeShortcutText: { ...typography.body, color: colors.textSecondary },
   periodCard: {
     alignItems: 'center',
     backgroundColor: colors.surface1,

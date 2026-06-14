@@ -32,6 +32,7 @@ export type Database = {
       life_scores: Table;
       learning_books: Table;
       learning_courses: Table;
+      finance_settings: Table;
       finance_transactions: Table;
       finance_categories: Table;
       weekly_summaries: Table;

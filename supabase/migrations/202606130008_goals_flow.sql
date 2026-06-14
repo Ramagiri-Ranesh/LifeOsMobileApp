@@ -140,6 +140,7 @@ alter table public.weekly_goals add column if not exists user_id uuid references
 alter table public.weekly_goals add column if not exists category_id uuid references public.goal_categories(id) on delete set null;
 alter table public.weekly_goals add column if not exists category text;
 alter table public.weekly_goals add column if not exists monthly_goal_id uuid references public.monthly_goals(id) on delete cascade;
+alter table public.weekly_goals add column if not exists linked_monthly_goal_id uuid references public.monthly_goals(id) on delete cascade;
 alter table public.weekly_goals add column if not exists target_value numeric default 1;
 alter table public.weekly_goals add column if not exists current_value numeric default 0;
 alter table public.weekly_goals add column if not exists unit text default 'tasks';
@@ -246,7 +247,9 @@ set
   target_value = coalesce(target_value, 1),
   current_value = coalesce(current_value, 0),
   unit = coalesce(unit, 'tasks'),
-  week_start = coalesce(week_start, current_date - (extract(isodow from current_date)::integer - 1))
+  week_start = coalesce(week_start, current_date - (extract(isodow from current_date)::integer - 1)),
+  monthly_goal_id = coalesce(monthly_goal_id, linked_monthly_goal_id),
+  linked_monthly_goal_id = coalesce(linked_monthly_goal_id, monthly_goal_id)
 where true;
 
 update public.weekly_goals weekly
@@ -259,6 +262,7 @@ create index if not exists monthly_goals_user_month_idx on public.monthly_goals 
 create index if not exists monthly_goals_category_idx on public.monthly_goals (category_id);
 create index if not exists weekly_goals_user_week_idx on public.weekly_goals (user_id, week_start);
 create index if not exists weekly_goals_monthly_goal_idx on public.weekly_goals (monthly_goal_id);
+create index if not exists weekly_goals_linked_monthly_goal_idx on public.weekly_goals (linked_monthly_goal_id);
 create index if not exists weekly_goals_category_idx on public.weekly_goals (category_id);
 create index if not exists tasks_weekly_goal_idx on public.tasks (weekly_goal_id);
 create index if not exists tasks_monthly_goal_idx on public.tasks (monthly_goal_id);
