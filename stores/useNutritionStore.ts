@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 
 import { supabase } from '@/lib/supabase';
+import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
 
 type LooseRow = Record<string, Json | undefined>;
 
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+export type MealType = 'breakfast' | 'mid_morning' | 'lunch' | 'evening_snack' | 'dinner' | 'bedtime_snack';
 
 export type FoodItem = {
   id: string;
@@ -83,7 +84,13 @@ type NutritionState = {
   loadDailyData: (date: string) => Promise<void>;
   searchFoods: (query: string) => Promise<FoodItem[]>;
   addFoodItem: (food: Omit<FoodItem, 'id'>) => Promise<FoodItem | null>;
-  logMealItem: (date: string, mealType: MealType, food: FoodItem, qty: number) => Promise<void>;
+  logMealItem: (
+    date: string,
+    mealType: MealType,
+    food: FoodItem,
+    qty: number,
+    options?: { saveAsTemplate?: boolean; templateName?: string },
+  ) => Promise<void>;
   applyTemplate: (date: string, mealType: MealType, template: MealTemplate) => Promise<void>;
   deleteMealItem: (date: string, mealType: MealType, itemId: string) => Promise<void>;
   loadTemplates: () => Promise<void>;
@@ -98,14 +105,63 @@ function asNumber(value: Json | undefined, fallback = 0) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+function numberFromColumns(row: LooseRow, keys: string[], fallback = 0) {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return fallback;
+}
+
+function textFromColumns(row: LooseRow, keys: string[], fallback = '') {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value;
+  }
+  return fallback;
+}
+
+function normalizedFoodName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function fallbackForFoodName(name: string) {
+  const normalized = normalizedFoodName(name);
+  return INDIAN_FOODS.find((food) => {
+    const fallbackName = normalizedFoodName(food.name);
+    return normalized === fallbackName || normalized.includes(fallbackName) || fallbackName.includes(normalized);
+  });
+}
+
 function asMealType(value: Json | undefined): MealType {
   const text = asText(value).toLowerCase();
-  if (text === 'breakfast' || text === 'lunch' || text === 'dinner' || text === 'snack') return text;
-  return 'snack';
+  if (
+    text === 'breakfast' ||
+    text === 'mid_morning' ||
+    text === 'lunch' ||
+    text === 'evening_snack' ||
+    text === 'dinner' ||
+    text === 'bedtime_snack'
+  ) {
+    return text;
+  }
+  if (text === 'snack') return 'evening_snack';
+  return 'evening_snack';
 }
 
 function titleMeal(type: MealType) {
-  return type.charAt(0).toUpperCase() + type.slice(1);
+  return type
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function rowId(row: LooseRow, fallback: string) {
@@ -119,14 +175,20 @@ function dbFoodId(foodId?: string) {
 }
 
 function foodFromRow(row: LooseRow): FoodItem {
+  const fallback = fallbackForFoodName(asText(row.name));
+  const calories = numberFromColumns(row, ['calories', 'kcal', 'calorie', 'energy_kcal', 'calories_per_serving', 'kcal_per_serving', 'calories_per_100g']);
+  const protein = numberFromColumns(row, ['protein', 'protein_g', 'protein_per_serving', 'protein_per_100g']);
+  const carbs = numberFromColumns(row, ['carbs', 'carbs_g', 'carbohydrates', 'carbohydrate_g', 'carbs_per_serving', 'carbs_per_100g']);
+  const fat = numberFromColumns(row, ['fat', 'fat_g', 'fat_per_serving', 'fat_per_100g']);
+
   return {
     id: rowId(row, `food-${Date.now()}`),
     name: asText(row.name, 'Food item'),
-    serving: asText(row.serving) || asText(row.unit) || 'serving',
-    calories: asNumber(row.calories) || asNumber(row.kcal),
-    protein: asNumber(row.protein) || asNumber(row.protein_g),
-    carbs: asNumber(row.carbs) || asNumber(row.carbs_g),
-    fat: asNumber(row.fat) || asNumber(row.fat_g),
+    serving: textFromColumns(row, ['serving', 'serving_size', 'portion', 'unit'], fallback?.serving ?? 'serving'),
+    calories: calories || fallback?.calories || 0,
+    protein: protein || fallback?.protein || 0,
+    carbs: carbs || fallback?.carbs || 0,
+    fat: fat || fallback?.fat || 0,
   };
 }
 
@@ -202,62 +264,6 @@ function scaleFood(food: FoodItem, qty: number): MealLogItem {
   };
 }
 
-function fallbackItem(foodId: string, qty: number): MealLogItem {
-  const food = INDIAN_FOODS.find((item) => item.id === foodId);
-  if (!food) throw new Error(`Missing fallback food: ${foodId}`);
-  const item = scaleFood(food, qty);
-  return { ...item, id: `fallback-item-${foodId}-${qty}` };
-}
-
-function templateFromItems(id: string, name: string, mealType: MealType, items: MealLogItem[]): MealTemplate {
-  return {
-    id,
-    name,
-    mealType,
-    calories: items.reduce((total, item) => total + item.calories, 0),
-    protein: items.reduce((total, item) => total + item.protein, 0),
-    carbs: items.reduce((total, item) => total + item.carbs, 0),
-    fat: items.reduce((total, item) => total + item.fat, 0),
-    items,
-  };
-}
-
-const DAILY_MEAL_TEMPLATES: MealTemplate[] = [
-  templateFromItems('fallback-template-breakfast', 'My Breakfast', 'breakfast', [
-    fallbackItem('fallback-banana', 3),
-    fallbackItem('fallback-whole-milk', 1),
-    fallbackItem('fallback-egg', 3),
-    fallbackItem('fallback-almonds', 1),
-  ]),
-  templateFromItems('fallback-template-lunch', 'My Lunch', 'lunch', [
-    fallbackItem('fallback-chapathi', 2),
-    fallbackItem('fallback-ghee', 1),
-    fallbackItem('fallback-curry-mixed-veg', 1),
-  ]),
-  templateFromItems('fallback-template-afternoon', 'My Afternoon Meal', 'snack', [
-    fallbackItem('fallback-white-rice', 1),
-    fallbackItem('fallback-curry-mixed-veg', 1),
-    fallbackItem('fallback-ghee', 1),
-  ]),
-  templateFromItems('fallback-template-evening', 'My Evening Snack', 'snack', [
-    fallbackItem('fallback-peanuts', 1),
-    fallbackItem('fallback-chenigapappu', 1),
-  ]),
-  templateFromItems('fallback-template-dinner', 'My Dinner', 'dinner', [
-    fallbackItem('fallback-white-rice', 1),
-    fallbackItem('fallback-curry-mixed-veg', 1),
-    fallbackItem('fallback-ghee', 1),
-  ]),
-];
-
-function withFallbackTemplates(templates: MealTemplate[]) {
-  const existingNames = new Set(templates.map((template) => template.name.toLowerCase()));
-  return [
-    ...templates,
-    ...DAILY_MEAL_TEMPLATES.filter((template) => !existingNames.has(template.name.toLowerCase())),
-  ];
-}
-
 function upsertMeal(meals: Meal[], date: string, mealType: MealType, item: MealLogItem) {
   const existing = meals.find((meal) => meal.type === mealType);
   if (!existing) {
@@ -291,10 +297,15 @@ function upsertMeal(meals: Meal[], date: string, mealType: MealType, item: MealL
   );
 }
 
-async function getOrCreateMealLog(date: string, mealType: MealType) {
+function currentUserId() {
+  return useUserStore.getState().currentUserId;
+}
+
+async function getOrCreateMealLog(date: string, mealType: MealType, userId: string) {
   const { data: existing } = await supabase
     .from('meal_logs')
     .select('*')
+    .eq('user_id', userId)
     .eq('date', date)
     .eq('meal_type', mealType)
     .maybeSingle();
@@ -303,12 +314,58 @@ async function getOrCreateMealLog(date: string, mealType: MealType) {
 
   const { data, error } = await supabase
     .from('meal_logs')
-    .insert({ date, meal_type: mealType })
+    .insert({ user_id: userId, date, meal_type: mealType, name: titleMeal(mealType) })
     .select('*')
     .single();
 
   if (error) throw error;
   return String((data as LooseRow).id);
+}
+
+async function createTemplateFromFood(userId: string, mealType: MealType, food: FoodItem, item: MealLogItem, templateName?: string) {
+  const name = templateName?.trim() || `${titleMeal(mealType)} - ${food.name}`;
+  const { data: template, error } = await supabase
+    .from('meal_templates')
+    .insert({
+      user_id: userId,
+      name,
+      meal_type: mealType,
+      calories: item.calories,
+      protein: item.protein,
+      carbs: item.carbs,
+      fat: item.fat,
+    })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+
+  const templateId = rowId(template as LooseRow, '');
+  const { error: itemError } = await supabase.from('meal_template_items').insert({
+    meal_template_id: templateId,
+    food_item_id: dbFoodId(food.id),
+    name: food.name,
+    serving: food.serving,
+    qty: item.qty,
+    quantity: item.qty,
+    calories: item.calories,
+    protein: item.protein,
+    carbs: item.carbs,
+    fat: item.fat,
+  });
+
+  if (itemError) throw itemError;
+
+  return {
+    id: templateId,
+    name,
+    mealType,
+    calories: item.calories,
+    protein: item.protein,
+    carbs: item.carbs,
+    fat: item.fat,
+    items: [{ ...item, id: `template-${templateId}` }],
+  };
 }
 
 export const useNutritionStore = create<NutritionState>((set) => ({
@@ -332,9 +389,16 @@ export const useNutritionStore = create<NutritionState>((set) => ({
   loadDailyData: async (date) => {
     set({ loading: true });
     try {
+      const userId = currentUserId();
+      if (!userId) {
+        set({ currentDate: date, todaysMeals: [], calories: 0 });
+        return;
+      }
+
       const { data, error } = await supabase
         .from('meal_logs')
         .select('*, meal_log_items(*, food_items(*))')
+        .eq('user_id', userId)
         .eq('date', date);
 
       if (error) throw error;
@@ -352,7 +416,12 @@ export const useNutritionStore = create<NutritionState>((set) => ({
   },
   searchFoods: async (query) => {
     const normalized = query.trim();
-    const request = supabase.from('food_items').select('*').limit(20);
+    const userId = currentUserId();
+    const request = supabase
+      .from('food_items')
+      .select('*')
+      .or(userId ? `user_id.is.null,user_id.eq.${userId}` : 'user_id.is.null')
+      .limit(20);
     const { data, error } = normalized.length > 0 ? await request.ilike('name', `%${normalized}%`) : await request;
     const fallbackResults = INDIAN_FOODS.filter((food) =>
       normalized.length === 0 ? true : food.name.toLowerCase().includes(normalized.toLowerCase()),
@@ -366,9 +435,11 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     return [...foods, ...fallbackResults.filter((food) => !existingNames.has(food.name.toLowerCase()))].slice(0, 20);
   },
   addFoodItem: async (food) => {
+    const userId = currentUserId();
     const { data, error } = await supabase
       .from('food_items')
       .insert({
+        user_id: userId,
         name: food.name,
         serving: food.serving,
         calories: food.calories,
@@ -386,7 +457,7 @@ export const useNutritionStore = create<NutritionState>((set) => ({
 
     return foodFromRow(data as LooseRow);
   },
-  logMealItem: async (date, mealType, food, qty) => {
+  logMealItem: async (date, mealType, food, qty, options) => {
     const item = scaleFood(food, qty);
     set((state) => {
       const meals = upsertMeal(state.todaysMeals, date, mealType, item);
@@ -394,10 +465,15 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     });
 
     try {
-      const mealLogId = await getOrCreateMealLog(date, mealType);
+      const userId = currentUserId();
+      if (!userId) return;
+
+      const mealLogId = await getOrCreateMealLog(date, mealType, userId);
       const { error } = await supabase.from('meal_log_items').insert({
         meal_log_id: mealLogId,
         food_item_id: dbFoodId(food.id),
+        name: food.name,
+        serving: food.serving,
         qty,
         quantity: qty,
         calories: item.calories,
@@ -406,6 +482,11 @@ export const useNutritionStore = create<NutritionState>((set) => ({
         fat: item.fat,
       });
       if (error) throw error;
+
+      if (options?.saveAsTemplate) {
+        const template = await createTemplateFromFood(userId, mealType, food, item, options.templateName);
+        set((state) => ({ templates: [template, ...state.templates] }));
+      }
     } catch (error) {
       console.warn('Unable to sync meal item', error);
     }
@@ -420,10 +501,15 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     });
 
     try {
-      const mealLogId = await getOrCreateMealLog(date, mealType);
+      const userId = currentUserId();
+      if (!userId) return;
+
+      const mealLogId = await getOrCreateMealLog(date, mealType, userId);
       const rows = template.items.map((item) => ({
         meal_log_id: mealLogId,
         food_item_id: dbFoodId(item.foodId),
+        name: item.name,
+        serving: item.serving,
         qty: item.qty,
         quantity: item.qty,
         calories: item.calories,
@@ -463,13 +549,22 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     }
   },
   loadTemplates: async () => {
-    const { data, error } = await supabase.from('meal_templates').select('*, meal_template_items(*, food_items(*))');
-    if (error) {
-      console.warn('Unable to load meal templates', error.message);
-      set({ templates: DAILY_MEAL_TEMPLATES });
+    const userId = currentUserId();
+    if (!userId) {
+      set({ templates: [] });
       return;
     }
-    set({ templates: withFallbackTemplates(((data ?? []) as LooseRow[]).map(templateFromRow)) });
+
+    const { data, error } = await supabase
+      .from('meal_templates')
+      .select('*, meal_template_items(*, food_items(*))')
+      .eq('user_id', userId);
+    if (error) {
+      console.warn('Unable to load meal templates', error.message);
+      set({ templates: [] });
+      return;
+    }
+    set({ templates: ((data ?? []) as LooseRow[]).map(templateFromRow) });
   },
   setWaterMl: (waterMl) => set({ waterMl }),
 }));

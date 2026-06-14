@@ -18,9 +18,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MacroBar } from '@/components/ui/MacroBar';
 import { ProgressRing } from '@/components/ui/ProgressRing';
-import { getMealSuggestion } from '@/lib/ai';
-import { cloneYesterdayMeals } from '@/lib/cloneYesterday';
-import { colors, radii, shadows, spacing, typography } from '@/lib/design';
+// Clone yesterday is paused for now. Keep the helper import path here for quick reactivation:
+// import { cloneYesterdayMeals } from '@/lib/cloneYesterday';
+import { colors, radii, spacing, typography } from '@/lib/design';
 import {
   type FoodItem,
   type Meal,
@@ -31,13 +31,14 @@ import { useUserStore } from '@/stores/useUserStore';
 
 const MEAL_META: Record<MealType, { label: string; emoji: string; fallbackTime: string }> = {
   breakfast: { label: 'Breakfast', emoji: '🍳', fallbackTime: '08:00' },
+  mid_morning: { label: 'Mid-morning', emoji: '🥤', fallbackTime: '11:00' },
   lunch: { label: 'Lunch', emoji: '🍛', fallbackTime: '13:00' },
+  evening_snack: { label: 'Evening Snack', emoji: '🍌', fallbackTime: '17:00' },
   dinner: { label: 'Dinner', emoji: '🍽️', fallbackTime: '20:00' },
-  snack: { label: 'Snack', emoji: '🍌', fallbackTime: '17:00' },
+  bedtime_snack: { label: 'Bedtime Snack', emoji: '🥛', fallbackTime: '22:00' },
 };
 
-const MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'snack', 'dinner'];
-const BANNED_SUGGESTION_FOODS = /\b(curd|dahi|oats?|oatmeal)\b/i;
+const MEAL_ORDER: MealType[] = ['breakfast', 'mid_morning', 'lunch', 'evening_snack', 'dinner', 'bedtime_snack'];
 
 type FoodDraft = {
   name: string;
@@ -86,18 +87,10 @@ function macroTotals(meals: Meal[]) {
   );
 }
 
-function fallbackSuggestion(remaining: number, cuisine: string[]) {
-  const style = cuisine[0] ?? 'South Indian';
-  if (remaining < 450) return `${style} egg bhurji with a small rice portion keeps dinner light and protein-forward.`;
-  return `${style} chicken or paneer rice bowl with dal and vegetables fits well into the remaining calories.`;
-}
-
 export default function NutritionScreen() {
   const insets = useSafeAreaInsets();
   const calorieGoal = useUserStore((state) => state.calorieGoal);
   const macros = useUserStore((state) => state.macros);
-  const foodsToAvoid = useUserStore((state) => state.foodsToAvoid);
-  const cuisinePreference = useUserStore((state) => state.cuisinePreference);
 
   const todaysMeals = useNutritionStore((state) => state.todaysMeals);
   const calories = useNutritionStore((state) => state.calories);
@@ -113,7 +106,7 @@ export default function NutritionScreen() {
 
   const [selectedDate, setSelectedDate] = useState(dateKey(new Date()));
   const [expandedMeal, setExpandedMeal] = useState<MealType | null>('breakfast');
-  const [activeMealType, setActiveMealType] = useState<MealType>('dinner');
+  const [activeMealType, setActiveMealType] = useState<MealType>('breakfast');
   const [logModalVisible, setLogModalVisible] = useState(false);
   const [templateModalVisible, setTemplateModalVisible] = useState(false);
   const [addFoodModalVisible, setAddFoodModalVisible] = useState(false);
@@ -121,11 +114,12 @@ export default function NutritionScreen() {
   const [foodResults, setFoodResults] = useState<FoodItem[]>([]);
   const [selectedFood, setSelectedFood] = useState<FoodItem | null>(null);
   const [qty, setQty] = useState('1');
-  const [suggestion, setSuggestion] = useState('');
-  const [suggestionLoading, setSuggestionLoading] = useState(true);
+  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  const [cloneLoading, setCloneLoading] = useState(false);
-  const [canCloneYesterday, setCanCloneYesterday] = useState(false);
+  // Clone yesterday is paused for now.
+  // const [cloneLoading, setCloneLoading] = useState(false);
+  // const [canCloneYesterday, setCanCloneYesterday] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [foodDraft, setFoodDraft] = useState<FoodDraft>({
     name: '',
@@ -138,8 +132,7 @@ export default function NutritionScreen() {
 
   const totals = useMemo(() => macroTotals(todaysMeals), [todaysMeals]);
   const todayKey = useMemo(() => dateKey(new Date()), []);
-  const isViewingToday = selectedDate === todayKey;
-  const caloriesRemaining = Math.max(0, calorieGoal - calories);
+  // const isViewingToday = selectedDate === todayKey;
   const progress = calorieGoal > 0 ? (calories / calorieGoal) * 100 : 0;
   const mealsByType = useMemo(
     () => new Map(todaysMeals.map((meal) => [meal.type, meal] as const)),
@@ -149,7 +142,11 @@ export default function NutritionScreen() {
     () => MEAL_ORDER.filter((type) => mealsByType.has(type)).map((type) => mealsByType.get(type)!),
     [mealsByType],
   );
-  const missingDinnerSnack = MEAL_ORDER.filter((type) => (type === 'dinner' || type === 'snack') && !mealsByType.has(type));
+  const nextMealType = MEAL_ORDER.find((type) => !mealsByType.has(type)) ?? null;
+  const activeTemplates = useMemo(
+    () => templates.filter((template) => template.mealType === activeMealType),
+    [activeMealType, templates],
+  );
   const scaledPreview = selectedFood
     ? {
         calories: Math.round(selectedFood.calories * numberFromDraft(qty)),
@@ -172,23 +169,24 @@ export default function NutritionScreen() {
     void refreshData();
   }, [refreshData]);
 
-  useEffect(() => {
-    let mounted = true;
-
-    async function checkCloneAvailability() {
-      if (!isViewingToday) {
-        if (mounted) setCanCloneYesterday(false);
-        return;
-      }
-
-      if (mounted) setCanCloneYesterday(true);
-    }
-
-    void checkCloneAvailability();
-    return () => {
-      mounted = false;
-    };
-  }, [isViewingToday, todayKey, todaysMeals.length]);
+  // Clone yesterday is paused for now.
+  // useEffect(() => {
+  //   let mounted = true;
+  //
+  //   async function checkCloneAvailability() {
+  //     if (!isViewingToday) {
+  //       if (mounted) setCanCloneYesterday(false);
+  //       return;
+  //     }
+  //
+  //     if (mounted) setCanCloneYesterday(true);
+  //   }
+  //
+  //   void checkCloneAvailability();
+  //   return () => {
+  //     mounted = false;
+  //   };
+  // }, [isViewingToday, todayKey, todaysMeals.length]);
 
   useEffect(() => {
     if (!toastMessage) return undefined;
@@ -209,53 +207,31 @@ export default function NutritionScreen() {
     };
   }, [query, searchFoods]);
 
-  useEffect(() => {
-    let mounted = true;
-
-    async function loadSuggestion() {
-      setSuggestionLoading(true);
-      try {
-        const result = await getMealSuggestion({
-          todaysMeals,
-          calorieRemaining: caloriesRemaining,
-          foodsToAvoid: Array.from(new Set([...foodsToAvoid, 'curd', 'dahi', 'oats'])),
-          cuisinePreference: cuisinePreference.length > 0 ? cuisinePreference : ['South Indian', 'Hyderabadi', 'Telugu'],
-        });
-        const firstLine = result.trim().split('\n')[0];
-        const safeSuggestion =
-          firstLine && !BANNED_SUGGESTION_FOODS.test(firstLine)
-            ? firstLine
-            : fallbackSuggestion(caloriesRemaining, cuisinePreference);
-        if (mounted) setSuggestion(safeSuggestion);
-      } catch (error) {
-        console.warn('Unable to load meal suggestion', error);
-        if (mounted) setSuggestion(fallbackSuggestion(caloriesRemaining, cuisinePreference));
-      } finally {
-        if (mounted) setSuggestionLoading(false);
-      }
-    }
-
-    void loadSuggestion();
-    return () => {
-      mounted = false;
-    };
-  }, [caloriesRemaining, cuisinePreference, foodsToAvoid, todaysMeals]);
-
   const openLogMeal = useCallback((mealType: MealType) => {
     setActiveMealType(mealType);
     setExpandedMeal(mealType);
     setSelectedFood(null);
     setQty('1');
     setQuery('');
+    setSaveAsTemplate(false);
+    setTemplateName('');
     setLogModalVisible(true);
+  }, []);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
   }, []);
 
   const saveMealItem = useCallback(async () => {
     if (!selectedFood) return;
     const quantity = Math.max(0.1, numberFromDraft(qty));
-    await logMealItem(selectedDate, activeMealType, selectedFood, quantity);
+    await logMealItem(selectedDate, activeMealType, selectedFood, quantity, {
+      saveAsTemplate,
+      templateName,
+    });
+    if (saveAsTemplate) showToast('Meal saved and template created');
     setLogModalVisible(false);
-  }, [activeMealType, logMealItem, qty, selectedDate, selectedFood]);
+  }, [activeMealType, logMealItem, qty, saveAsTemplate, selectedDate, selectedFood, showToast, templateName]);
 
   const saveFoodItem = useCallback(async () => {
     if (!foodDraft.name.trim()) return;
@@ -285,28 +261,20 @@ export default function NutritionScreen() {
     [deleteMealItem, selectedDate],
   );
 
-  const addSuggestionToDinner = useCallback(() => {
-    setQuery(suggestion.replace(/^["']|["']$/g, ''));
-    openLogMeal('dinner');
-  }, [openLogMeal, suggestion]);
-
-  const showToast = useCallback((message: string) => {
-    setToastMessage(message);
-  }, []);
-
-  const handleClone = useCallback(async () => {
-    setCloneLoading(true);
-    try {
-      const success = await cloneYesterdayMeals();
-      if (success) {
-        await refreshData();
-        setCanCloneYesterday(false);
-        showToast("Yesterday's meals cloned ✓ Edit what changed");
-      }
-    } finally {
-      setCloneLoading(false);
-    }
-  }, [refreshData, showToast]);
+  // Clone yesterday is paused for now.
+  // const handleClone = useCallback(async () => {
+  //   setCloneLoading(true);
+  //   try {
+  //     const success = await cloneYesterdayMeals();
+  //     if (success) {
+  //       await refreshData();
+  //       setCanCloneYesterday(false);
+  //       showToast("Yesterday's meals cloned ✓ Edit what changed");
+  //     }
+  //   } finally {
+  //     setCloneLoading(false);
+  //   }
+  // }, [refreshData, showToast]);
 
   const renderMeal = ({ item }: { item: Meal }) => {
     const meta = MEAL_META[item.type];
@@ -356,7 +324,7 @@ export default function NutritionScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + spacing.sm, paddingBottom: insets.bottom + 170 },
+          { paddingTop: insets.top + spacing.sm, paddingBottom: insets.bottom + 112 },
         ]}
         refreshControl={<RefreshControl refreshing={refreshing || loading} onRefresh={refreshData} tintColor={colors.emeraldLight} />}
         showsVerticalScrollIndicator={false}>
@@ -373,16 +341,7 @@ export default function NutritionScreen() {
                   <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
-              {canCloneYesterday ? (
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  disabled={cloneLoading}
-                  style={[styles.cloneButton, cloneLoading && styles.disabledButton]}
-                  onPress={handleClone}>
-                  <Ionicons name="copy-outline" size={14} color={colors.emeraldLight} />
-                  <Text style={styles.cloneButtonText}>{cloneLoading ? 'Cloning' : 'Clone yesterday'}</Text>
-                </TouchableOpacity>
-              ) : null}
+              {/* Clone yesterday is paused for now. */}
             </View>
           </View>
           <TouchableOpacity style={styles.templateButton} onPress={() => setTemplateModalVisible(true)}>
@@ -398,7 +357,7 @@ export default function NutritionScreen() {
         ) : null}
 
         <View style={styles.heroCard}>
-          <ProgressRing progress={progress} size={188} strokeWidth={15} color={colors.emerald} arcDegrees={240}>
+          <ProgressRing progress={progress} size={118} strokeWidth={11} color={colors.emerald} arcDegrees={300}>
             <Text style={styles.calorieValue}>{Math.round(calories)}</Text>
             <Text style={styles.calorieGoal}>/ {calorieGoal} kcal</Text>
           </ProgressRing>
@@ -411,10 +370,17 @@ export default function NutritionScreen() {
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Today's Meals</Text>
-          <TouchableOpacity style={styles.logMealButton} onPress={() => openLogMeal('breakfast')}>
-            <Ionicons name="add" size={18} color={colors.textPrimary} />
-            <Text style={styles.logMealText}>Log Meal</Text>
-          </TouchableOpacity>
+          {nextMealType ? (
+            <TouchableOpacity style={styles.logMealButton} onPress={() => openLogMeal(nextMealType)}>
+              <Ionicons name="add" size={18} color={colors.textPrimary} />
+              <Text style={styles.logMealText}>Log {MEAL_META[nextMealType].label}</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.doneBadge}>
+              <Ionicons name="checkmark" size={16} color={colors.emeraldLight} />
+              <Text style={styles.doneBadgeText}>All meals logged</Text>
+            </View>
+          )}
         </View>
 
         <FlatList
@@ -422,40 +388,10 @@ export default function NutritionScreen() {
           keyExtractor={(item) => item.id}
           renderItem={renderMeal}
           scrollEnabled={false}
-          ListEmptyComponent={<Text style={styles.emptyText}>No meals logged yet. Start with breakfast or jump straight to dinner.</Text>}
+          ListEmptyComponent={<Text style={styles.emptyText}>No meals logged yet. Start with breakfast from the button above.</Text>}
           contentContainerStyle={styles.mealList}
         />
-
-        <View style={styles.footerCards}>
-          {missingDinnerSnack.map((type) => (
-            <TouchableOpacity key={type} style={styles.dashedCard} onPress={() => openLogMeal(type)}>
-              <Text style={styles.dashedCardText}>+ Log {MEAL_META[type].label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
       </ScrollView>
-
-      <View style={[styles.suggestionWrap, { bottom: insets.bottom + 76 }]}>
-        <View style={styles.suggestionCard}>
-          <View style={styles.suggestionIcon}>
-            <Ionicons name="sparkles" size={18} color={colors.emeraldLight} />
-          </View>
-          <View style={styles.suggestionCopy}>
-            <Text style={styles.suggestionLabel}>AI Suggestion</Text>
-            {suggestionLoading ? (
-              <View style={styles.skeletonWrap}>
-                <View style={styles.skeletonLine} />
-                <View style={[styles.skeletonLine, styles.skeletonShort]} />
-              </View>
-            ) : (
-              <Text numberOfLines={2} style={styles.suggestionText}>{suggestion}</Text>
-            )}
-          </View>
-          <TouchableOpacity disabled={suggestionLoading} style={styles.addDinnerButton} onPress={addSuggestionToDinner}>
-            <Text style={styles.addDinnerText}>Add to Dinner</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
 
       <Modal visible={logModalVisible} animationType="slide" transparent onRequestClose={() => setLogModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
@@ -489,6 +425,10 @@ export default function NutritionScreen() {
                 <Ionicons name="add-circle-outline" size={22} color={colors.emeraldLight} />
               </TouchableOpacity>
             </View>
+            <TouchableOpacity style={styles.manualEntryButton} onPress={() => setAddFoodModalVisible(true)}>
+              <Ionicons name="create-outline" size={17} color={colors.emeraldLight} />
+              <Text style={styles.manualEntryText}>Enter food manually without searching</Text>
+            </TouchableOpacity>
             <FlatList
               data={foodResults}
               keyExtractor={(item) => item.id}
@@ -516,8 +456,28 @@ export default function NutritionScreen() {
                   : 'Select a food to preview calories and macros'}
               </Text>
             </View>
+            <TouchableOpacity style={styles.templateToggle} onPress={() => setSaveAsTemplate((value) => !value)}>
+              <Ionicons
+                name={saveAsTemplate ? 'checkbox' : 'square-outline'}
+                size={20}
+                color={saveAsTemplate ? colors.emeraldLight : colors.textSecondary}
+              />
+              <View style={styles.templateToggleCopy}>
+                <Text style={styles.templateToggleTitle}>Save this as a template</Text>
+                <Text style={styles.templateToggleSub}>Use it later from Templates for faster repeat logging.</Text>
+              </View>
+            </TouchableOpacity>
+            {saveAsTemplate ? (
+              <TextInput
+                placeholder={`${MEAL_META[activeMealType].label} - ${selectedFood?.name ?? 'template name'}`}
+                placeholderTextColor={colors.textMuted}
+                value={templateName}
+                onChangeText={setTemplateName}
+                style={styles.formInput}
+              />
+            ) : null}
             <TouchableOpacity disabled={!selectedFood} style={[styles.saveButton, !selectedFood && styles.disabledButton]} onPress={saveMealItem}>
-              <Text style={styles.saveButtonText}>Save to meal_log_items</Text>
+              <Text style={styles.saveButtonText}>{saveAsTemplate ? 'Save meal + template' : 'Save meal'}</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -543,7 +503,7 @@ export default function NutritionScreen() {
               ))}
             </View>
             <FlatList
-              data={templates}
+              data={activeTemplates}
               keyExtractor={(item) => item.id}
               renderItem={({ item }) => (
                 <TouchableOpacity
@@ -569,7 +529,7 @@ export default function NutritionScreen() {
                   <Text style={styles.foodKcal}>{Math.round(item.calories)} kcal</Text>
                 </TouchableOpacity>
               )}
-              ListEmptyComponent={<Text style={styles.emptyText}>No saved templates found.</Text>}
+              ListEmptyComponent={<Text style={styles.emptyText}>No {MEAL_META[activeMealType].label.toLowerCase()} templates yet. Save one while logging a food.</Text>}
             />
           </View>
         </View>
@@ -600,7 +560,7 @@ export default function NutritionScreen() {
               ))}
             </View>
             <TouchableOpacity style={styles.saveButton} onPress={saveFoodItem}>
-              <Text style={styles.saveButtonText}>Add to personal database</Text>
+              <Text style={styles.saveButtonText}>Save and select food</Text>
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
@@ -615,8 +575,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    gap: spacing.sm,
-    paddingHorizontal: 20,
+    gap: 10,
+    paddingHorizontal: 16,
   },
   header: {
     alignItems: 'center',
@@ -672,12 +632,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.emeraldBg,
     borderColor: colors.emerald,
-    borderRadius: radii.inner,
+    borderRadius: radii.pill,
     borderWidth: 1,
     flexDirection: 'row',
     gap: 6,
-    minHeight: 40,
-    paddingHorizontal: spacing.xs,
+    minHeight: 38,
+    paddingHorizontal: 12,
   },
   templateButtonText: {
     color: colors.emeraldLight,
@@ -701,29 +661,29 @@ const styles = StyleSheet.create({
   },
   heroCard: {
     alignItems: 'center',
+    flexDirection: 'row',
     backgroundColor: colors.surface1,
     borderColor: colors.borderLight,
     borderRadius: radii.card,
-    borderTopColor: colors.emerald,
-    borderTopWidth: 2,
     borderWidth: 1,
-    gap: spacing.sm,
-    padding: spacing.sm,
+    gap: 14,
+    minHeight: 174,
+    padding: 14,
   },
   calorieValue: {
     color: colors.textPrimary,
-    fontSize: 42,
+    fontSize: 30,
     fontWeight: '800',
-    lineHeight: 46,
+    lineHeight: 34,
   },
   calorieGoal: {
-    ...typography.body,
     color: colors.textMuted,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
   },
   macroStack: {
-    alignSelf: 'stretch',
-    gap: spacing.xs,
+    flex: 1,
+    gap: 10,
   },
   sectionHeader: {
     alignItems: 'center',
@@ -750,6 +710,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+  doneBadge: {
+    alignItems: 'center',
+    backgroundColor: colors.emeraldBg,
+    borderColor: colors.emerald,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 34,
+    paddingHorizontal: spacing.xs,
+  },
+  doneBadgeText: {
+    color: colors.emeraldLight,
+    fontSize: 12,
+    fontWeight: '800',
+  },
   mealList: {
     gap: spacing.xs,
   },
@@ -764,13 +740,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.xs,
-    minHeight: 64,
-    padding: spacing.sm,
+    minHeight: 58,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   mealEmoji: {
-    fontSize: 24,
-    lineHeight: 28,
-    width: 34,
+    fontSize: 22,
+    lineHeight: 26,
+    width: 32,
   },
   mealTitleWrap: {
     flex: 1,
@@ -801,7 +778,7 @@ const styles = StyleSheet.create({
   mealBody: {
     borderTopColor: colors.borderLight,
     borderTopWidth: 1,
-    padding: spacing.xs,
+    padding: 8,
   },
   foodRow: {
     alignItems: 'center',
@@ -809,7 +786,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.xs,
     justifyContent: 'space-between',
-    minHeight: 48,
+    minHeight: 40,
     paddingHorizontal: spacing.xs,
   },
   foodTextWrap: {
@@ -840,7 +817,7 @@ const styles = StyleSheet.create({
     gap: 4,
     justifyContent: 'center',
     marginTop: spacing.xs,
-    minHeight: 40,
+    minHeight: 36,
   },
   addItemText: {
     color: colors.emeraldLight,
@@ -851,88 +828,6 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     padding: spacing.sm,
     textAlign: 'center',
-  },
-  footerCards: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-  },
-  dashedCard: {
-    alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: radii.inner,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 58,
-  },
-  dashedCardText: {
-    color: colors.emeraldLight,
-    fontWeight: '800',
-  },
-  suggestionWrap: {
-    left: 16,
-    position: 'absolute',
-    right: 16,
-  },
-  suggestionCard: {
-    alignItems: 'center',
-    backgroundColor: colors.surface2,
-    borderColor: colors.emerald,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    minHeight: 86,
-    padding: spacing.sm,
-    ...shadows.ambient,
-  },
-  suggestionIcon: {
-    alignItems: 'center',
-    backgroundColor: colors.emeraldBg,
-    borderRadius: 18,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
-  },
-  suggestionCopy: {
-    flex: 1,
-    gap: 3,
-  },
-  suggestionLabel: {
-    ...typography.labelCaps,
-    color: colors.emeraldLight,
-  },
-  suggestionText: {
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '600',
-    lineHeight: 18,
-  },
-  addDinnerButton: {
-    alignItems: 'center',
-    backgroundColor: colors.emerald,
-    borderRadius: radii.inner,
-    justifyContent: 'center',
-    minHeight: 38,
-    paddingHorizontal: spacing.xs,
-  },
-  addDinnerText: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  skeletonWrap: {
-    gap: 6,
-  },
-  skeletonLine: {
-    backgroundColor: colors.surface3,
-    borderRadius: radii.pill,
-    height: 10,
-    width: '94%',
-  },
-  skeletonShort: {
-    width: '64%',
   },
   modalOverlay: {
     backgroundColor: 'rgba(0,0,0,0.62)',
@@ -962,6 +857,7 @@ const styles = StyleSheet.create({
   },
   mealChips: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
   },
   mealChip: {
@@ -970,7 +866,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: radii.pill,
     borderWidth: 1,
-    flex: 1,
+    flexBasis: '31%',
+    flexGrow: 1,
     minHeight: 34,
     justifyContent: 'center',
   },
@@ -1002,6 +899,21 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     minHeight: 44,
+  },
+  manualEntryButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+    minHeight: 40,
+  },
+  manualEntryText: {
+    color: colors.emeraldLight,
+    fontSize: 13,
+    fontWeight: '800',
   },
   foodResults: {
     maxHeight: 240,
@@ -1045,6 +957,31 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '700',
+  },
+  templateToggle: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    minHeight: 58,
+    padding: spacing.xs,
+  },
+  templateToggleCopy: {
+    flex: 1,
+  },
+  templateToggleTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  templateToggleSub: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
   },
   saveButton: {
     alignItems: 'center',

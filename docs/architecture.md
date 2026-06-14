@@ -351,7 +351,7 @@ flowchart TD
   NutritionStore --> MealLogItems[(meal_log_items)]
   NutritionStore --> MealTemplates[(meal_templates)]
   MealTemplates --> MealTemplateItems[(meal_template_items)]
-  NutritionScreen --> AI[Meal suggestion]
+  NutritionScreen -. paused .-> AI[Meal suggestion]
   NutritionScreen --> CloneYesterday[cloneYesterday]
   CloneYesterday --> MealLogs
   CloneYesterday --> MealLogItems
@@ -576,7 +576,7 @@ Target columns:
 - `id uuid primary key default gen_random_uuid()`
 - `user_id uuid not null references public.profiles(id) on delete cascade`
 - `date date not null`
-- `meal_type text not null check (meal_type in ('breakfast','lunch','dinner','snack'))`
+- `meal_type text not null check (meal_type in ('breakfast','mid_morning','lunch','evening_snack','dinner','bedtime_snack'))`
 - `name text`
 - `time text`
 - `calories numeric default 0`
@@ -641,7 +641,7 @@ Target columns:
 - `id uuid primary key default gen_random_uuid()`
 - `user_id uuid references public.profiles(id) on delete cascade null`
 - `name text not null`
-- `meal_type text check (meal_type in ('breakfast','lunch','dinner','snack'))`
+- `meal_type text check (meal_type in ('breakfast','mid_morning','lunch','evening_snack','dinner','bedtime_snack'))`
 - `calories numeric default 0`
 - `protein numeric default 0`
 - `carbs numeric default 0`
@@ -656,7 +656,7 @@ Relationships:
 
 RLS:
 
-- Same global-or-owned pattern as `food_items`.
+- User-owned templates only. Unlike `food_items`, templates are not loaded globally because each user builds repeat meals from their own logging flow.
 
 ### 8.8 `meal_template_items`
 

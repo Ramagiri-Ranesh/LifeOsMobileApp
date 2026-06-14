@@ -1,6 +1,7 @@
 import { Alert } from 'react-native';
 
 import { supabase } from './supabase';
+import { useUserStore } from '@/stores/useUserStore';
 
 type MealLogRow = Record<string, any>;
 
@@ -22,7 +23,10 @@ function textValue(...values: unknown[]) {
 }
 
 export async function hasMealLogsForDate(date: string): Promise<boolean> {
-  const { data, error } = await supabase.from('meal_logs').select('id').eq('date', date).limit(1);
+  const userId = useUserStore.getState().currentUserId;
+  if (!userId) return false;
+
+  const { data, error } = await supabase.from('meal_logs').select('id').eq('user_id', userId).eq('date', date).limit(1);
   if (error) {
     console.warn('Unable to check meal logs', error.message);
     return false;
@@ -31,6 +35,12 @@ export async function hasMealLogsForDate(date: string): Promise<boolean> {
 }
 
 export async function cloneYesterdayMeals(): Promise<boolean> {
+  const userId = useUserStore.getState().currentUserId;
+  if (!userId) {
+    Alert.alert('Profile unavailable', 'Sign in again before cloning meals.');
+    return false;
+  }
+
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
@@ -41,6 +51,7 @@ export async function cloneYesterdayMeals(): Promise<boolean> {
   const { data: logs, error } = await supabase
     .from('meal_logs')
     .select('*, meal_log_items(*)')
+    .eq('user_id', userId)
     .eq('date', yesterdayStr);
 
   if (error || !logs?.length) {
@@ -48,7 +59,7 @@ export async function cloneYesterdayMeals(): Promise<boolean> {
     return false;
   }
 
-  const { data: existing } = await supabase.from('meal_logs').select('id').eq('date', todayStr);
+  const { data: existing } = await supabase.from('meal_logs').select('id').eq('user_id', userId).eq('date', todayStr);
 
   if (existing?.length) {
     return new Promise((resolve) => {
@@ -59,7 +70,7 @@ export async function cloneYesterdayMeals(): Promise<boolean> {
           style: 'destructive',
           onPress: async () => {
             await deleteTodaysMeals(existing.map((row) => String((row as MealLogRow).id)));
-            await doClone(logs as MealLogRow[], todayStr);
+            await doClone(logs as MealLogRow[], todayStr, userId);
             resolve(true);
           },
         },
@@ -67,7 +78,7 @@ export async function cloneYesterdayMeals(): Promise<boolean> {
     });
   }
 
-  await doClone(logs as MealLogRow[], todayStr);
+  await doClone(logs as MealLogRow[], todayStr, userId);
   return true;
 }
 
@@ -77,11 +88,12 @@ async function deleteTodaysMeals(mealLogIds: string[]) {
   await supabase.from('meal_logs').delete().in('id', mealLogIds);
 }
 
-async function doClone(logs: MealLogRow[], todayStr: string) {
+async function doClone(logs: MealLogRow[], todayStr: string, userId: string) {
   for (const log of logs) {
     const { data: newLog, error } = await supabase
       .from('meal_logs')
       .insert({
+        user_id: userId,
         date: todayStr,
         meal_type: log.meal_type,
         name: textValue(log.name) || titleMeal(textValue(log.meal_type, log.type)),

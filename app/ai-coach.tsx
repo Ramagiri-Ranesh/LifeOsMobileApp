@@ -422,7 +422,7 @@ export default function AICoachScreen() {
       carbs: typeof message.payload?.carbs === 'number' ? message.payload.carbs : 45,
       fat: typeof message.payload?.fat === 'number' ? message.payload.fat : 12,
     };
-    await logMealItem(TODAY, 'snack', food, 1);
+    await logMealItem(TODAY, 'evening_snack', food, 1);
   };
 
   const listData = useMemo(() => [...messages].reverse(), [messages]);

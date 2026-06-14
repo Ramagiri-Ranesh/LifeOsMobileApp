@@ -328,13 +328,13 @@ Requirements:
 - Load meal templates.
 - Search `food_items` with local Indian fallback foods.
 - Add custom food items.
-- Log meal items into breakfast, lunch, snack, or dinner.
+- Log meal items into breakfast, mid-morning, lunch, evening snack, dinner, or bedtime snack.
 - Delete meal items by long press.
 - Apply templates to meals.
 - Clone yesterday's meals into today.
 - Display calorie ring and macro bars.
-- Generate AI meal suggestion with banned-food filter.
-- Add suggestion to dinner by opening the log flow with prefilled query.
+- Keep AI meal suggestion paused on the Nutrition screen until the manual food, meal slot, and template flows are stable.
+- Allow users to save a logged food as a meal template for faster repeat logging.
 
 Primary data:
 
@@ -504,7 +504,7 @@ Requirements:
 - Send prompt to current AI provider.
 - Infer message type from answer text.
 - Animate AI response word by word.
-- Allow meal suggestion cards to log a snack through nutrition store.
+- Allow meal suggestion cards to log an evening snack through nutrition store.
 
 Primary data:
 
