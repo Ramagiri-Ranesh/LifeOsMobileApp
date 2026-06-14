@@ -26,6 +26,7 @@ import { TimelineItem } from '@/components/ui/TimelineItem';
 import { calculateGoalScore, calculateLifeScore } from '@/lib/calculations';
 import { getDailyBrief } from '@/lib/ai';
 import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/design';
+import { mealFallbackTime } from '@/lib/nutritionSchedule';
 import { cancelTaskNotification, scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { syncWaterLog } from '@/lib/waterLog';
@@ -256,9 +257,9 @@ export default function DailyHubScreen() {
         : `${todaysWorkout.name} planned`;
 
   const planItems = useMemo<PlanItem[]>(() => {
-    const mealItems = todaysMeals.map((meal, index) => ({
+    const mealItems = todaysMeals.map((meal) => ({
       id: `meal-${meal.id}`,
-      time: index === 0 ? '08:00' : index === 1 ? '13:00' : '20:00',
+      time: mealFallbackTime(meal.type),
       title: meal.name,
       subtitle: `${meal.calories} kcal · ${meal.protein}g protein`,
       domain: 'nutrition' as const,

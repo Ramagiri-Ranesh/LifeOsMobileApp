@@ -21,6 +21,7 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 // Clone yesterday is paused for now. Keep the helper import path here for quick reactivation:
 // import { cloneYesterdayMeals } from '@/lib/cloneYesterday';
 import { colors, radii, spacing, typography } from '@/lib/design';
+import { MEAL_META, MEAL_ORDER } from '@/lib/nutritionSchedule';
 import {
   type FoodItem,
   type Meal,
@@ -28,17 +29,6 @@ import {
   useNutritionStore,
 } from '@/stores/useNutritionStore';
 import { useUserStore } from '@/stores/useUserStore';
-
-const MEAL_META: Record<MealType, { label: string; emoji: string; fallbackTime: string }> = {
-  breakfast: { label: 'Breakfast', emoji: '🍳', fallbackTime: '08:00' },
-  mid_morning: { label: 'Mid-morning', emoji: '🥤', fallbackTime: '11:00' },
-  lunch: { label: 'Lunch', emoji: '🍛', fallbackTime: '13:00' },
-  evening_snack: { label: 'Evening Snack', emoji: '🍌', fallbackTime: '17:00' },
-  dinner: { label: 'Dinner', emoji: '🍽️', fallbackTime: '20:00' },
-  bedtime_snack: { label: 'Bedtime Snack', emoji: '🥛', fallbackTime: '22:00' },
-};
-
-const MEAL_ORDER: MealType[] = ['breakfast', 'mid_morning', 'lunch', 'evening_snack', 'dinner', 'bedtime_snack'];
 
 type FoodDraft = {
   name: string;

@@ -47,6 +47,17 @@ The display order is:
 breakfast -> mid_morning -> lunch -> evening_snack -> dinner -> bedtime_snack
 ```
 
+Default meal timings:
+
+| Meal slot | Time |
+| --- | --- |
+| Breakfast | 08:00 |
+| Mid-morning | 11:00 |
+| Lunch | 13:30 |
+| Evening Snack | 17:00 |
+| Dinner | 20:00 |
+| Bedtime Snack | 22:00 |
+
 ## Data Ownership
 
 Nutrition data is scoped to the current profile id from `useUserStore.currentUserId`.
