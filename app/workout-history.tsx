@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
 import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
@@ -54,6 +54,8 @@ function formatDate(value: string) {
 
 export default function WorkoutHistoryScreen() {
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const [sessions, setSessions] = useState<HistorySession[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -115,9 +117,9 @@ export default function WorkoutHistoryScreen() {
               <Text style={styles.musclePill}>{item.muscleGroup}</Text>
             </View>
             <View style={styles.statRow}>
-              <HistoryStat label="Duration" value={`${item.durationMinutes || 0}m`} />
-              <HistoryStat label="Volume" value={`${Math.round(item.volumeKg || 0).toLocaleString()}kg`} />
-              <HistoryStat label="Sets" value={`${item.setsDone || 0}`} />
+              <HistoryStat label="Duration" value={`${item.durationMinutes || 0}m`} styles={styles} />
+              <HistoryStat label="Volume" value={`${Math.round(item.volumeKg || 0).toLocaleString()}kg`} styles={styles} />
+              <HistoryStat label="Sets" value={`${item.setsDone || 0}`} styles={styles} />
             </View>
           </View>
         )}
@@ -133,7 +135,7 @@ export default function WorkoutHistoryScreen() {
   );
 }
 
-function HistoryStat({ label, value }: { label: string; value: string }) {
+function HistoryStat({ label, value, styles }: { label: string; value: string; styles: ReturnType<typeof createStyles> }) {
   return (
     <View style={styles.stat}>
       <Text style={styles.statValue}>{value}</Text>
@@ -142,7 +144,8 @@ function HistoryStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: {
     backgroundColor: colors.background,
     flex: 1,
@@ -253,4 +256,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
-});
+  });
+}

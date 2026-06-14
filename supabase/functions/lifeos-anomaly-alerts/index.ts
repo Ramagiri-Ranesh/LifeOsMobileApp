@@ -13,18 +13,10 @@ type Meal = {
   date?: string;
 };
 
-type Habit = {
-  name?: string;
-  lastLoggedAt?: string;
-  last_logged_at?: string;
-  completedToday?: boolean;
-};
-
 type Payload = {
   calorieGoal?: number;
   gymGoalPerWeek?: number;
   meals?: Meal[];
-  habits?: Habit[];
 };
 
 const corsHeaders = {
@@ -50,14 +42,6 @@ function caloriesByDate(meals: Meal[]) {
   }, {});
 }
 
-function habitLoggedHoursAgo(habit: Habit) {
-  const raw = habit.lastLoggedAt ?? habit.last_logged_at;
-  if (!raw) return null;
-  const loggedAt = new Date(raw).getTime();
-  if (!Number.isFinite(loggedAt)) return null;
-  return (Date.now() - loggedAt) / 36e5;
-}
-
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -74,10 +58,9 @@ serve(async (req) => {
     const calorieGoal = payload.calorieGoal ?? 2200;
     const gymGoal = payload.gymGoalPerWeek ?? 4;
 
-    const [{ data: mealRows }, { data: workoutRows }, { data: habitRows }] = await Promise.all([
+    const [{ data: mealRows }, { data: workoutRows }] = await Promise.all([
       supabase.from('meal_logs').select('date, calories').gte('date', daysAgo(7)),
       supabase.from('workout_sessions').select('started_at, date').gte('started_at', daysAgo(10)),
-      supabase.from('habit_logs').select('habit_name, name, last_logged_at, logged_at, completed_at').order('logged_at', { ascending: false }).limit(20),
     ]);
 
     const meals = Array.isArray(mealRows) && mealRows.length > 0 ? mealRows as Meal[] : payload.meals ?? [];
@@ -101,24 +84,6 @@ serve(async (req) => {
         title: 'Gym rhythm slipping',
         body: 'No gym session in 5 days while your goal is 4 per week. Schedule the next lift.',
         route: '/(tabs)/gym',
-      });
-    }
-
-    const habits = Array.isArray(habitRows) && habitRows.length > 0
-      ? habitRows.map((row) => ({
-          name: row.habit_name ?? row.name,
-          last_logged_at: row.last_logged_at ?? row.logged_at ?? row.completed_at,
-        }))
-      : payload.habits ?? [];
-    const habitAtRisk = habits.find((habit) => {
-      const hoursAgo = habitLoggedHoursAgo(habit);
-      return hoursAgo !== null && hoursAgo >= 22 && hoursAgo < 24;
-    });
-    if (habitAtRisk) {
-      alerts.push({
-        title: 'Habit streak at risk',
-        body: `${habitAtRisk.name ?? 'A habit'} was last logged about 22 hours ago.`,
-        route: '/(tabs)/habits',
       });
     }
 

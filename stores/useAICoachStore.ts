@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { supabase } from '@/lib/supabase';
+import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
 
 export type CoachMessageRole = 'user' | 'ai';
@@ -63,11 +64,9 @@ export const useAICoachStore = create<CoachState>((set, get) => ({
     })),
   loadPersistedMessages: async () => {
     try {
-      const { data, error } = await supabase
-        .from('ai_coach_messages')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
+      const userId = useUserStore.getState().currentUserId;
+      const request = supabase.from('ai_coach_messages').select('*').order('created_at', { ascending: false }).limit(50);
+      const { data, error } = userId ? await request.eq('user_id', userId) : await request.is('user_id', null);
 
       if (error) throw error;
       set({ messages: ((data ?? []) as CoachMessageRow[]).map(rowToMessage).reverse() });
@@ -78,10 +77,10 @@ export const useAICoachStore = create<CoachState>((set, get) => ({
   persistRecentMessages: async (nextMessages) => {
     const messages = (nextMessages ?? get().messages).slice(-50);
     try {
-      const { data: user } = await supabase.auth.getUser();
+      const userId = useUserStore.getState().currentUserId;
       const rows = messages.map((message) => ({
         id: message.id,
-        user_id: user.user?.id,
+        user_id: userId,
         role: message.role,
         message_type: message.type,
         text: message.text,

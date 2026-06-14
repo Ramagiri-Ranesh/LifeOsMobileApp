@@ -105,13 +105,12 @@ app/
     register.tsx           Profile and app_users persistence
 
   (tabs)/
-    _layout.tsx            Seven-tab layout
+    _layout.tsx            Six-tab layout
     index.tsx              Daily Hub
     nutrition.tsx          Nutrition logging
     gym.tsx                Gym session execution
     goals.tsx              Weekly/monthly/finance combined UI
     analytics.tsx          Performance charts
-    habits.tsx             Habit tracker
     settings.tsx           Notifications, AI model, lock, backup, logout
 
   ai-coach.tsx             Modal AI coach
@@ -180,7 +179,6 @@ Architecture direction:
   - `lib/nutritionService.ts`
   - `lib/gymService.ts`
   - `lib/goalsService.ts`
-  - `lib/habitsService.ts`
   - `lib/analyticsService.ts`
   - `lib/financeService.ts`
 - Keep `lib/ai.ts` as provider adapter plus small prompt helpers, not screen-specific business logic.
@@ -196,7 +194,6 @@ stores/
   useGymStore.ts
   useGoalsStore.ts
   useAnalyticsStore.ts
-  useHabitsStore.ts
   useAICoachStore.ts
   useSettingsStore.ts
 ```
@@ -267,7 +264,6 @@ Tabs:
 - `gym` -> Gym
 - `goals` -> Goals
 - `analytics` -> Analytics
-- `habits` -> Habits
 - `settings` -> Settings
 
 Target rule:
@@ -285,7 +281,6 @@ Target rule:
 | `useGymStore` | current split, active session shell, PR map, streak | No explicit persist |
 | `useGoalsStore` | lightweight weekly/monthly goal arrays | No explicit persist |
 | `useAnalyticsStore` | current Life Score and placeholder trends | No explicit persist |
-| `useHabitsStore` | local habit toggle shell | No explicit persist |
 | `useAICoachStore` | recent AI coach messages | Uses AsyncStorage and Supabase |
 | `useSettingsStore` | notification settings, quiet hours, AI model, app lock | Yes |
 
@@ -412,8 +407,6 @@ This inventory includes all tables listed in `types/database.ts`, all tables cre
 | `water_log` | Created | `user_id` | Daily hydration |
 | `weekly_goals` | Missing creation migration | `user_id` | Weekly execution goals |
 | `monthly_goals` | Missing creation migration | `user_id` | Monthly goal planning |
-| `habits` | Missing creation migration | `user_id` | Habit definitions |
-| `habit_logs` | Missing creation migration | `user_id` plus `habit_id` | Habit completions |
 | `life_scores` | Missing creation migration | `user_id` | Daily score snapshots |
 | `learning_books` | Type only / retired UI | `user_id` | Previous reading tracker, not used by current app screens |
 | `learning_courses` | Type only / retired UI | `user_id` | Previous course tracker, not used by current app screens |
@@ -906,70 +899,7 @@ Relationships:
 - `monthly_goals.user_id -> profiles.id`
 - `weekly_goals.monthly_goal_id -> monthly_goals.id`
 
-### 8.16 `habits`
-
-Purpose:
-
-- Habit definitions.
-
-Target columns based on Habits screen:
-
-- `id uuid primary key default gen_random_uuid()`
-- `user_id uuid not null references public.profiles(id) on delete cascade`
-- `name text not null`
-- `title text`
-- `frequency text default 'daily'`
-- `frequency_type text default 'daily'`
-- `frequency_count integer default 7`
-- `times_per_week integer`
-- `category text`
-- `routine text`
-- `stack text`
-- `reminder_time text`
-- `rest_day text`
-- `rest_days text`
-- `created_at timestamptz default now()`
-- `updated_at timestamptz default now()`
-
-Relationships:
-
-- `habits.user_id -> profiles.id`
-- `habit_logs.habit_id -> habits.id`
-
-Upgrade requirements:
-
-- Stop using `supabase.auth.getUser()` unless the app migrates to Supabase Auth.
-
-### 8.17 `habit_logs`
-
-Purpose:
-
-- Habit completion records.
-
-Target columns:
-
-- `id uuid primary key default gen_random_uuid()`
-- `user_id uuid not null references public.profiles(id) on delete cascade`
-- `habit_id uuid not null references public.habits(id) on delete cascade`
-- `habit_name text`
-- `name text`
-- `date date not null`
-- `log_date date`
-- `completed_at timestamptz`
-- `logged_at timestamptz default now()`
-- `last_logged_at timestamptz`
-- `created_at timestamptz default now()`
-
-Relationships:
-
-- `habit_logs.user_id -> profiles.id`
-- `habit_logs.habit_id -> habits.id`
-
-Constraints:
-
-- Recommended unique: `(habit_id, date)`.
-
-### 8.18 `life_scores`
+### 8.16 `life_scores`
 
 Purpose:
 
@@ -987,7 +917,7 @@ Target columns:
 - `nutrition_score numeric`
 - `fitness_score numeric`
 - `productivity_score numeric`
-- `habits_score numeric`
+- `hydration_score numeric`
 - `alignment_score numeric`
 - `finance_score numeric`
 - `created_at timestamptz default now()`
@@ -1117,7 +1047,7 @@ Target columns:
 - `risks jsonb default '[]'`
 - `nutrition_avg numeric`
 - `workout_count integer`
-- `habit_completion_rate numeric`
+- `hydration_completion_rate numeric`
 - `life_score_avg numeric`
 - `ai_model text`
 - `created_at timestamptz default now()`
@@ -1177,9 +1107,6 @@ erDiagram
   profiles ||--o{ monthly_goals : owns
   monthly_goals ||--o{ weekly_goals : breaks_into
   profiles ||--o{ weekly_goals : owns
-  profiles ||--o{ habits : owns
-  habits ||--o{ habit_logs : records
-  profiles ||--o{ habit_logs : owns
   profiles ||--o{ life_scores : owns
   profiles ||--o{ finance_categories : owns
   finance_categories ||--o{ finance_transactions : categorizes
@@ -1196,7 +1123,6 @@ erDiagram
 - App session is local Zustand state.
 - Some RLS policies allow all anon/authenticated access.
 - Some code uses `currentUserId` from `useUserStore`.
-- Habits code uses `supabase.auth.getUser()` for `user_id`, which does not align with custom auth.
 
 ### Target Option A: Keep Custom Auth Short Term
 
@@ -1344,8 +1270,6 @@ Architecture rule:
    - `body_metrics`
    - `weekly_goals`
    - `monthly_goals`
-   - `habits`
-   - `habit_logs`
    - `life_scores`
    - `finance_categories`
    - `finance_transactions`
@@ -1377,9 +1301,6 @@ workout_sets(session_id)
 body_metrics(user_id, date) unique
 weekly_goals(user_id, week_start)
 monthly_goals(user_id, month)
-habits(user_id, created_at)
-habit_logs(habit_id, date) unique
-habit_logs(user_id, date)
 life_scores(user_id, date) unique
 finance_transactions(user_id, date desc)
 finance_categories(user_id, name)
@@ -1400,7 +1321,6 @@ ai_coach_messages(user_id, created_at desc)
 ### Phase 2: Align Identity
 
 - Choose custom auth or Supabase Auth.
-- Remove mixed `supabase.auth.getUser()` ownership from Habits or migrate all auth.
 - Replace broad policies.
 - Make all user-owned writes include owner id.
 
@@ -1416,7 +1336,6 @@ lib/services/
   gymService.ts
   taskService.ts
   goalsService.ts
-  habitsService.ts
   analyticsService.ts
   aiCoachService.ts
   financeService.ts
@@ -1463,7 +1382,6 @@ Keep compatibility exports if needed to avoid one giant refactor.
 - Login -> profile restored.
 - Nutrition -> meal log and item creation.
 - Gym -> session, sets, body metric, task completion.
-- Habits -> create/log/delete under chosen auth model.
 - Settings -> notification schedule validation.
 
 ### E2E Smoke Tests
@@ -1471,7 +1389,6 @@ Keep compatibility exports if needed to avoid one giant refactor.
 - New user onboarding to Daily Hub.
 - Log breakfast.
 - Complete a workout.
-- Add a habit and mark it done.
 - Add weekly goal and finance transaction.
 - Open analytics.
 - Ask AI Coach with provider unavailable and verify fallback.
@@ -1523,7 +1440,6 @@ Decision:
 Rationale:
 
 - RLS cannot securely enforce local Zustand session identity.
-- Habits already show identity drift by using Supabase Auth in one place.
 
 ### ADR-005: AI Provider Must Be Explicit
 
@@ -1548,7 +1464,6 @@ Before feature expansion:
 - [ ] All user-owned tables have `user_id`.
 - [ ] Auth model chosen.
 - [ ] Broad RLS policies replaced or explicitly marked development-only.
-- [ ] Habits ownership aligned with app auth.
 - [ ] AI provider labels and implementation match.
 - [ ] Finance route decision made.
 - [ ] Key flows tested on Android.

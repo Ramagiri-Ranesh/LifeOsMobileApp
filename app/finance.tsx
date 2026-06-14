@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProgressRing } from '@/components/ui/ProgressRing';
-import { colors, radii, shadows, spacing, typography } from '@/lib/design';
+import { radii, shadows, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import {
   currentMonthRange,
   dateKey,
@@ -117,6 +117,8 @@ function iconName(icon: string) {
 export default function FinanceScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const [period, setPeriod] = useState<Period>('monthly');
   const [settings, setSettings] = useState<FinanceSettings | null>(null);
@@ -638,7 +640,8 @@ export default function FinanceScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { gap: spacing.sm, paddingHorizontal: spacing.gutter },
   header: { alignItems: 'center', flexDirection: 'row', gap: spacing.xs },
@@ -897,4 +900,5 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: { color: colors.background, fontSize: 15, fontWeight: '900' },
   disabledButton: { opacity: 0.6 },
-});
+  });
+}

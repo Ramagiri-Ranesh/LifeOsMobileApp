@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-LifeOS is a dark-mode personal tracking and planning app built with React Native, Expo Router, Zustand, and Supabase. The current product combines onboarding, editable profile management, daily planning, nutrition logging, gym tracking, goals, analytics, habits, AI coaching, persisted notifications, app lock, and lightweight account login.
+LifeOS is a dark-mode personal tracking and planning app built with React Native, Expo Router, Zustand, and Supabase. The current product combines onboarding, editable profile management, daily planning, nutrition logging, gym tracking, goals, analytics, AI coaching, persisted notifications, app lock, and lightweight account login.
 
 This PRD is based on the current repository structure and implementation. It does not assume the earlier prompt as truth. Where code references a feature but the schema or route is incomplete, that gap is documented explicitly.
 
@@ -11,7 +11,7 @@ This PRD is based on the current repository structure and implementation. It doe
 The PRD is grounded in these project areas:
 
 - `app/`: Expo Router screens and navigation.
-- `stores/`: Zustand state for user, nutrition, gym, goals, analytics, habits, AI coach, and settings.
+- `stores/`: Zustand state for user, nutrition, gym, goals, analytics, AI coach, and settings.
 - `lib/`: AI provider, calculations, profile serialization, notifications, water sync, workout planning, workout task creation, Supabase client.
 - `supabase/migrations/`: implemented database migrations.
 - `supabase/functions/lifeos-anomaly-alerts/`: anomaly alert edge function.
@@ -25,7 +25,7 @@ LifeOS should help one user turn profile data and goals into daily execution:
 - Complete onboarding once and restore the user's dashboard later.
 - Generate a nutrition, water, and first-week workout plan from profile inputs.
 - Present a single Daily Hub for today's plan, Life Score, calories, hydration, workout, and tasks.
-- Let the user log meals, foods, workouts, body weight, water, tasks, habits, goals, and spending.
+- Let the user log meals, foods, workouts, body weight, water, tasks, goals, and spending.
 - Show analytics across life score, calories, workouts, strength, tasks, weight, correlations, and category scores.
 - Offer AI-assisted planning, meal suggestions, daily briefs, pattern insights, and chat coaching.
 - Send local notifications and background anomaly alerts.
@@ -92,14 +92,13 @@ Root redirect rules:
 
 ### Bottom Tabs
 
-The tab navigator has seven tabs:
+The tab navigator has six tabs:
 
 - Home: Daily Hub
 - Diet: Nutrition
 - Gym: Gym Floor
 - Goals: combined weekly, monthly, and finance areas
 - Analytics: Performance Hub
-- Habits: Habits Tracker
 - Settings: Control Center
 
 ### Placeholder Routes
@@ -461,37 +460,7 @@ Primary data:
 - `body_metrics`
 - `finance_transactions`
 
-### 8.14 Habits
-
-Route: `app/(tabs)/habits.tsx`
-
-Purpose:
-
-- Manage recurring routines and habit streaks.
-
-Requirements:
-
-- Load habits and logs for the last 84 days.
-- Show fallback habits when no persisted habits exist.
-- Show heatmap for last 12 weeks.
-- Group morning and night routines.
-- Show day-of-week analytics.
-- Add habits with frequency, category, and reminder time.
-- Toggle today's habit completion.
-- Swipe right to mark done.
-- Swipe left to delete.
-- Delete habit logs when deleting a persisted habit.
-
-Primary data:
-
-- `habits`
-- `habit_logs`
-
-Current implementation note:
-
-- This screen uses `supabase.auth.getUser()` when adding habits/logs, while the app's main login path uses custom `app_users`. This user ownership path needs alignment.
-
-### 8.15 AI Coach
+### 8.14 AI Coach
 
 Route: `app/ai-coach.tsx`
 
@@ -505,7 +474,7 @@ Requirements:
 - Show insight cards for correlation, protein/nutrient alert, and streak win.
 - Persist/reload recent coach messages.
 - Let user select context chips: diet today, today's workout, weekly progress, sleep last night.
-- Build recent context from meals, workouts, weekly goals, habits, and life scores.
+- Build recent context from meals, workouts, weekly goals, and life scores.
 - Send prompt to current AI provider.
 - Infer message type from answer text.
 - Animate AI response word by word.
@@ -660,12 +629,11 @@ Note:
 
 - The full Gym screen now manages most workout execution locally rather than relying heavily on this store.
 
-### Goals, Habits, Analytics, AI Coach, Settings Stores
+### Goals, Analytics, AI Coach, Settings Stores
 
 Responsibilities:
 
 - Goals store: lightweight weekly/monthly goal arrays.
-- Habits store: lightweight local habit toggle state.
 - Analytics store: Life Score and trend placeholders.
 - AI Coach store: persisted messages and Supabase message sync.
 - Settings store: notifications, quiet hours, reminder times, AI model, app lock.
@@ -700,8 +668,6 @@ Critical gap:
 | `meal_template_items` | Nutrition store | Foods inside reusable meals |
 | `weekly_goals` | Goals, AI Coach | Weekly execution |
 | `monthly_goals` | Goals | Monthly planning |
-| `habits` | Habits screen | Habit definitions |
-| `habit_logs` | Habits screen, anomaly function | Habit completions |
 | `life_scores` | Analytics, AI Coach | Daily score history |
 | `finance_transactions` | Goals, Analytics | Spending tracker |
 | `finance_categories` | Database type only | Category budgets, not currently used by code |
@@ -745,15 +711,10 @@ Requirement:
 - Monthly breakdown creates new weekly goals.
 - Goals screen uses `finance_transactions` in the same route as weekly and monthly goal planning.
 
-### Habits
-
-- `habit_logs.habit_id` should reference `habits.id`.
-- Habit logs should also be user-scoped consistently with the app's custom profile model.
-
 ### AI Coach
 
 - `ai_coach_messages` persists chat messages.
-- AI Coach reads recent meal, workout, weekly goal, habit, and life score context.
+- AI Coach reads recent meal, workout, weekly goal, and life score context.
 
 ## 12. AI Requirements
 
@@ -798,7 +759,6 @@ Background function:
 - `lifeos-anomaly-alerts` checks:
   - Calories below 70 percent of goal for three recent days.
   - No recent workout in five days when weekly gym goal is four or more.
-  - Habit streak at risk when last log is roughly 22 to 24 hours ago.
 
 Requirements:
 
@@ -814,7 +774,6 @@ Requirements:
 Current risks:
 
 - Several RLS policies use `using (true)` and `with check (true)`.
-- Login is custom app-level auth, while some habit code uses Supabase Auth user id.
 - Password hashing is local custom hashing, not Supabase Auth.
 - Broad anonymous grants exist for profile, water, tasks, workouts, and app user registration.
 
@@ -834,7 +793,6 @@ High priority:
 - Add missing Supabase table creation migrations for all tables used by code.
 - Standardize workout set foreign key naming.
 - Replace broad RLS policies with user-scoped policies.
-- Align habits user ownership with custom login model.
 - Fix AI provider consistency across code, labels, settings, and persisted profile payload.
 - Decide whether the standalone Finance route should become a real screen or be removed from root stack.
 
@@ -865,7 +823,6 @@ The current LifeOS MVP is acceptable when:
 - Gym can log sets, save sessions and sets, save optional body weight, complete workout task, and show workout history.
 - Goals can load and create weekly goals, break monthly goals into weekly goals, and log finance transactions.
 - Analytics loads real domain data when present and handles missing data deliberately.
-- Habits can create, log, unlog, and delete habits under the same user identity model as the rest of the app.
 - AI Coach can load context, send messages to the selected provider, persist messages, and handle provider failure.
 - Settings can open Profile, schedule notifications, validate times, toggle app lock, export settings, change AI model, and logout.
 - Notifications inbox can load persisted notifications, mark one/all as read, and route notification taps.

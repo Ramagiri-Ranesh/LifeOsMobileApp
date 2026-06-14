@@ -1,6 +1,7 @@
+import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { colors, radii, spacing } from '@/lib/design';
+import { radii, spacing, useLifeOSColors, type ColorPalette } from '@/lib/design';
 
 type HeatmapDay = {
   date: string;
@@ -22,7 +23,10 @@ function intensityColor(value: number, maxValue: number, color: string) {
   return color.length === 7 ? `${color}${alpha}` : color;
 }
 
-export function HeatmapCalendar({ days = [], color = colors.violet, weeks = 5, maxValue = 7, today }: Props) {
+export function HeatmapCalendar({ days = [], color, weeks = 5, maxValue = 7, today }: Props) {
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const activeColor = color ?? colors.violet;
   const cells = Array.from({ length: weeks * 7 }, (_, index) => days[index] ?? { date: `${index}`, value: 0 });
 
   return (
@@ -32,7 +36,7 @@ export function HeatmapCalendar({ days = [], color = colors.violet, weeks = 5, m
           key={`${day.date}-${index}`}
           style={[
             styles.cell,
-            { backgroundColor: intensityColor(day.value, maxValue, color) },
+            { backgroundColor: intensityColor(day.value, maxValue, activeColor) },
             today === day.date && styles.todayCell,
           ]}
         />
@@ -41,7 +45,8 @@ export function HeatmapCalendar({ days = [], color = colors.violet, weeks = 5, m
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -57,4 +62,5 @@ const styles = StyleSheet.create({
     borderColor: colors.textPrimary,
     borderWidth: 1,
   },
-});
+  });
+}

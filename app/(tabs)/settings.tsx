@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Modal,
@@ -18,8 +18,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LifeOSCard } from '@/components/ui/LifeOSCard';
 import { exportSettingsBackup, scheduleLifeOSNotifications } from '@/lib/notifications';
-import { colors, radii, spacing, typography } from '@/lib/design';
-import { type AIModel, type NotificationType, useSettingsStore } from '@/stores/useSettingsStore';
+import { appModeOptions, colorsForAppMode, radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
+import { syncCurrentSettings } from '@/lib/settingsService';
+import { type AIModel, type AppMode, type NotificationType, useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
 
 const NOTIFICATION_ROWS: { key: NotificationType; title: string; detail: string }[] = [
@@ -28,7 +29,7 @@ const NOTIFICATION_ROWS: { key: NotificationType; title: string; detail: string 
   { key: 'workout', title: 'Workout reminder', detail: 'Gym-day reminder based on split' },
   { key: 'evening', title: 'Evening review', detail: 'Reflection modal reminder' },
   { key: 'weekly', title: 'Weekly summary', detail: 'Sunday 8 PM goal review' },
-  { key: 'aiAlerts', title: 'AI anomaly alerts', detail: 'Background nutrition, gym, and habit checks' },
+  { key: 'aiAlerts', title: 'AI anomaly alerts', detail: 'Background nutrition and gym checks' },
 ];
 
 const TIME_ROWS = [
@@ -39,28 +40,82 @@ const TIME_ROWS = [
   { key: 'weekly', label: 'Weekly' },
 ] as const;
 
+const SETTINGS_SYNC_DEBOUNCE_MS = 700;
+
 function validTime(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const notifications = useSettingsStore((state) => state.notifications);
   const quietHours = useSettingsStore((state) => state.quietHours);
   const notificationTimes = useSettingsStore((state) => state.notificationTimes);
   const aiModel = useSettingsStore((state) => state.aiModel);
+  const appMode = useSettingsStore((state) => state.appMode);
   const appLockEnabled = useSettingsStore((state) => state.appLockEnabled);
+  const settingsSyncStatus = useSettingsStore((state) => state.settingsSyncStatus);
+  const lastSyncedAt = useSettingsStore((state) => state.lastSyncedAt);
+  const lastSyncError = useSettingsStore((state) => state.lastSyncError);
   const setNotificationEnabled = useSettingsStore((state) => state.setNotificationEnabled);
   const setQuietHours = useSettingsStore((state) => state.setQuietHours);
   const setNotificationTime = useSettingsStore((state) => state.setNotificationTime);
   const setAIModel = useSettingsStore((state) => state.setAIModel);
+  const setAppMode = useSettingsStore((state) => state.setAppMode);
   const setAppLockEnabled = useSettingsStore((state) => state.setAppLockEnabled);
   const profile = useUserStore((state) => state.profile);
+  const currentUserId = useUserStore((state) => state.currentUserId);
   const resetAuth = useUserStore((state) => state.resetAuth);
 
   const [backupVisible, setBackupVisible] = useState(false);
   const [backupJson, setBackupJson] = useState('');
   const [saving, setSaving] = useState(false);
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const syncSettings = useCallback(() => {
+    if (!currentUserId) return;
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      syncTimerRef.current = null;
+      void syncCurrentSettings(currentUserId);
+    }, SETTINGS_SYNC_DEBOUNCE_MS);
+  }, [currentUserId]);
+
+  const syncSettingsNow = useCallback(async () => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    if (!currentUserId) return false;
+    return syncCurrentSettings(currentUserId);
+  }, [currentUserId]);
+
+  useEffect(
+    () => () => {
+      if (!syncTimerRef.current) return;
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+      if (currentUserId) void syncCurrentSettings(currentUserId);
+    },
+    [currentUserId],
+  );
+
+  const updateNotification = (type: NotificationType, enabled: boolean) => {
+    setNotificationEnabled(type, enabled);
+    syncSettings();
+  };
+
+  const updateAIModel = (model: AIModel) => {
+    setAIModel(model);
+    syncSettings();
+  };
+
+  const updateAppMode = (mode: AppMode) => {
+    setAppMode(mode);
+    syncSettings();
+  };
 
   const toggleAppLock = async (enabled: boolean) => {
     if (!enabled) {
@@ -89,8 +144,14 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (quietHours.enabled && (!validTime(quietHours.start) || !validTime(quietHours.end))) {
+      Alert.alert('Check quiet hours', 'Quiet hours must use 24-hour HH:mm format.');
+      return;
+    }
+
     setSaving(true);
     try {
+      await syncSettingsNow();
       const scheduled = await scheduleLifeOSNotifications();
       Alert.alert(scheduled ? 'Notifications scheduled' : 'Permission needed', scheduled ? 'Your LifeOS reminders are refreshed.' : 'Enable notifications to schedule reminders.');
     } catch (error) {
@@ -161,6 +222,29 @@ export default function SettingsScreen() {
         </LifeOSCard>
 
         <LifeOSCard>
+          <Text style={styles.sectionTitle}>System Status</Text>
+          <View style={styles.statusGrid}>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusLabel}>Account</Text>
+              <Text style={styles.statusValue}>{currentUserId ? 'Signed in' : 'Local only'}</Text>
+            </View>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusLabel}>Settings sync</Text>
+              <Text style={styles.statusValue}>{settingsSyncStatus}</Text>
+            </View>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusLabel}>Last sync</Text>
+              <Text style={styles.statusValue}>{lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Never'}</Text>
+            </View>
+            <View style={styles.statusPill}>
+              <Text style={styles.statusLabel}>App lock</Text>
+              <Text style={styles.statusValue}>{appLockEnabled ? 'On' : 'Off'}</Text>
+            </View>
+          </View>
+          {lastSyncError ? <Text style={styles.errorText}>Sync issue: {lastSyncError}</Text> : null}
+        </LifeOSCard>
+
+        <LifeOSCard>
           <Text style={styles.sectionTitle}>Notifications</Text>
           {NOTIFICATION_ROWS.map((row) => (
             <View key={row.key} style={styles.row}>
@@ -170,7 +254,7 @@ export default function SettingsScreen() {
               </View>
               <Switch
                 value={notifications[row.key]}
-                onValueChange={(value) => setNotificationEnabled(row.key, value)}
+                onValueChange={(value) => updateNotification(row.key, value)}
                 thumbColor={notifications[row.key] ? colors.violetLight : colors.textMuted}
                 trackColor={{ false: colors.surface3, true: colors.violetBg }}
               />
@@ -186,6 +270,7 @@ export default function SettingsScreen() {
               <TextInput
                 value={notificationTimes[row.key]}
                 onChangeText={(value) => setNotificationTime(row.key, value)}
+                onBlur={syncSettings}
                 keyboardType="numbers-and-punctuation"
                 placeholder="HH:mm"
                 placeholderTextColor={colors.textMuted}
@@ -208,7 +293,10 @@ export default function SettingsScreen() {
             </View>
             <Switch
               value={quietHours.enabled}
-              onValueChange={(value) => setQuietHours({ enabled: value })}
+              onValueChange={(value) => {
+                setQuietHours({ enabled: value });
+                syncSettings();
+              }}
               thumbColor={quietHours.enabled ? colors.violetLight : colors.textMuted}
               trackColor={{ false: colors.surface3, true: colors.violetBg }}
             />
@@ -217,14 +305,16 @@ export default function SettingsScreen() {
             <TextInput
               value={quietHours.start}
               onChangeText={(value) => setQuietHours({ start: value })}
-              style={styles.timeInput}
+              onBlur={syncSettings}
+              style={[styles.timeInput, quietHours.enabled && !validTime(quietHours.start) && styles.inputError]}
               placeholder="22:30"
               placeholderTextColor={colors.textMuted}
             />
             <TextInput
               value={quietHours.end}
               onChangeText={(value) => setQuietHours({ end: value })}
-              style={styles.timeInput}
+              onBlur={syncSettings}
+              style={[styles.timeInput, quietHours.enabled && !validTime(quietHours.end) && styles.inputError]}
               placeholder="06:30"
               placeholderTextColor={colors.textMuted}
             />
@@ -240,7 +330,7 @@ export default function SettingsScreen() {
                 <TouchableOpacity
                   key={model}
                   accessibilityRole="button"
-                  onPress={() => setAIModel(model)}
+                  onPress={() => updateAIModel(model)}
                   style={[styles.segmentButton, active && styles.segmentActive]}>
                   <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{model}</Text>
                 </TouchableOpacity>
@@ -250,7 +340,30 @@ export default function SettingsScreen() {
         </LifeOSCard>
 
         <LifeOSCard>
-          <Text style={styles.sectionTitle}>Privacy & Backup</Text>
+          <Text style={styles.sectionTitle}>App Mode</Text>
+          <View style={styles.modeGrid}>
+            {appModeOptions.map((mode) => {
+              const active = appMode === mode.key;
+              const palette = colorsForAppMode(mode.key, 'dark');
+              return (
+                <TouchableOpacity
+                  key={mode.key}
+                  accessibilityRole="button"
+                  onPress={() => updateAppMode(mode.key)}
+                  style={[styles.modeButton, active && styles.modeButtonActive]}>
+                  <View style={[styles.modeDot, { backgroundColor: palette.background, borderColor: palette.violetLight }]} />
+                  <View style={styles.rowText}>
+                    <Text style={[styles.modeLabel, active && styles.segmentTextActive]}>{mode.label}</Text>
+                    <Text style={styles.modeDetail}>{mode.detail}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </LifeOSCard>
+
+        <LifeOSCard>
+          <Text style={styles.sectionTitle}>Privacy & Data</Text>
           <View style={styles.row}>
             <View style={styles.rowText}>
               <Text style={styles.rowTitle}>App lock</Text>
@@ -265,7 +378,7 @@ export default function SettingsScreen() {
           </View>
           <TouchableOpacity accessibilityRole="button" onPress={showBackup} style={styles.secondaryButton}>
             <Ionicons name="document-text-outline" color={colors.textPrimary} size={18} />
-            <Text style={styles.secondaryText}>Backup settings JSON</Text>
+            <Text style={styles.secondaryText}>Export settings JSON</Text>
           </TouchableOpacity>
           <TouchableOpacity accessibilityRole="button" onPress={logout} style={styles.logoutButton}>
             <Ionicons name="log-out-outline" color={colors.rose} size={18} />
@@ -278,7 +391,7 @@ export default function SettingsScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Settings Backup</Text>
+              <Text style={styles.modalTitle}>Settings Export</Text>
               <TouchableOpacity accessibilityRole="button" onPress={() => setBackupVisible(false)}>
                 <Ionicons name="close" color={colors.textPrimary} size={22} />
               </TouchableOpacity>
@@ -293,7 +406,8 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   root: { backgroundColor: colors.background, flex: 1 },
   content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.xl },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
@@ -342,6 +456,29 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 4 },
   rowTitle: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
   rowDetail: { ...typography.labelCaps, color: colors.textMuted, textTransform: 'none' },
+  errorText: { ...typography.labelCaps, color: colors.rose, marginTop: spacing.sm, textTransform: 'none' },
+  statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  statusPill: {
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
+    padding: spacing.sm,
+  },
+  statusLabel: { ...typography.labelCaps, color: colors.textMuted, textTransform: 'none' },
+  statusValue: { color: colors.textPrimary, fontSize: 14, fontWeight: '800', marginTop: 2, textTransform: 'capitalize' },
+  essentialGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
+  essentialPill: {
+    backgroundColor: colors.violetBg,
+    borderColor: colors.violet,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  essentialText: { ...typography.labelCaps, color: colors.violetLight, textTransform: 'none' },
   timeRow: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -404,6 +541,26 @@ const styles = StyleSheet.create({
   segmentActive: { backgroundColor: colors.violetBg },
   segmentText: { ...typography.labelCaps, color: colors.textMuted, textTransform: 'uppercase' },
   segmentTextActive: { color: colors.violetLight },
+  modeGrid: { gap: spacing.xs },
+  modeButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
+  modeButtonActive: { backgroundColor: colors.violetBg, borderColor: colors.violetLight },
+  modeDot: {
+    borderRadius: 14,
+    borderWidth: 2,
+    height: 28,
+    width: 28,
+  },
+  modeLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '800' },
+  modeDetail: { ...typography.labelCaps, color: colors.textMuted, textTransform: 'none' },
   modalOverlay: { backgroundColor: 'rgba(0,0,0,0.58)', flex: 1, justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: colors.surface1,
@@ -416,4 +573,5 @@ const styles = StyleSheet.create({
   modalTitle: { ...typography.h1, color: colors.textPrimary },
   backupBox: { backgroundColor: colors.surface2, borderRadius: radii.inner, padding: spacing.md },
   backupText: { ...typography.labelCaps, color: colors.textSecondary, fontFamily: 'SpaceMono', textTransform: 'none' },
-});
+  });
+}

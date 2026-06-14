@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors } from '@/lib/design';
 
 const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
   index: 'grid-outline',
@@ -10,7 +10,6 @@ const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
   gym: 'barbell-outline',
   goals: 'flag-outline',
   analytics: 'analytics-outline',
-  habits: 'repeat-outline',
   settings: 'settings-outline',
 };
 
@@ -32,9 +31,18 @@ type BottomNavProps = {
 
 export function BottomNav({ state, descriptors, navigation }: BottomNavProps) {
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
 
   return (
-    <View style={[styles.wrap, { marginBottom: Math.max(spacing.sm, insets.bottom + spacing.xs) }]}>
+    <View
+      style={[
+        styles.wrap,
+        {
+          backgroundColor: colors.surface1,
+          borderColor: colors.border,
+          marginBottom: Math.max(spacing.sm, insets.bottom + spacing.xs),
+        },
+      ]}>
       {state.routes.map((route, index) => {
         const focused = state.index === index;
         const options = descriptors[route.key].options;
@@ -46,13 +54,16 @@ export function BottomNav({ state, descriptors, navigation }: BottomNavProps) {
             accessibilityRole="button"
             accessibilityState={focused ? { selected: true } : {}}
             onPress={() => navigation.navigate(route.name)}
-            style={[styles.item, focused && styles.itemActive]}>
+            style={[styles.item, focused && { backgroundColor: colors.violetBg }]}>
             <Ionicons
               name={icons[route.name] ?? 'ellipse-outline'}
               color={focused ? colors.violetLight : colors.textMuted}
               size={20}
             />
-            <Text allowFontScaling={false} style={[styles.label, focused && styles.labelActive]} numberOfLines={1}>
+            <Text
+              allowFontScaling={false}
+              style={[styles.label, { color: focused ? colors.violetLight : colors.textMuted }]}
+              numberOfLines={1}>
               {label}
             </Text>
           </Pressable>
@@ -64,8 +75,6 @@ export function BottomNav({ state, descriptors, navigation }: BottomNavProps) {
 
 const styles = StyleSheet.create({
   wrap: {
-    backgroundColor: colors.surface1,
-    borderColor: colors.border,
     borderRadius: radii.card,
     borderWidth: 1,
     flexDirection: 'row',
@@ -81,16 +90,9 @@ const styles = StyleSheet.create({
     minHeight: 52,
     justifyContent: 'center',
   },
-  itemActive: {
-    backgroundColor: colors.violetBg,
-  },
   label: {
     ...typography.labelCaps,
-    color: colors.textMuted,
     fontSize: 10,
     textTransform: 'uppercase',
-  },
-  labelActive: {
-    color: colors.violetLight,
   },
 });

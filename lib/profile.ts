@@ -75,6 +75,7 @@ export function buildProfilePayload(args: {
   calorieGoal: number;
   macros: { protein: number; carbs: number; fat: number };
   generatedPlan: GeneratedPlan;
+  aiModel?: 'openai' | 'ollama';
 }) {
   const onboardingProfile = JSON.parse(JSON.stringify(args.draft)) as Json;
   const firstWeekPlan = JSON.parse(JSON.stringify(args.generatedPlan)) as Json;
@@ -103,7 +104,7 @@ export function buildProfilePayload(args: {
     first_meal_time: args.profile.firstMealTime,
     last_meal_time: args.profile.lastMealTime,
     ai_calc_calories: args.profile.aiCalcCalories,
-    ai_model: 'openai',
+    ai_model: args.aiModel ?? 'openai',
     calorie_goal: args.calorieGoal,
     protein_goal_g: args.macros.protein,
     carbs_goal_g: args.macros.carbs,
@@ -164,6 +165,8 @@ export function profileFromRow(row: LooseRow): {
       firstMealTime: asText(row.first_meal_time, '07:00'),
       lastMealTime: asText(row.last_meal_time, '21:00'),
       aiCalcCalories: row.ai_calc_calories === true,
+      lastBodyRecalibrationAt: asText(row.last_body_recalibration_at) || null,
+      bodyRecalibrationCount: asNumber(row.body_recalibration_count, 0),
     },
     calorieGoal: asNumber(row.calorie_goal, 2380),
     macros,

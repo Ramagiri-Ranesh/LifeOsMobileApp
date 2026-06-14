@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Text, View, StyleSheet, type TextStyle } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
-import { colors, typography } from '@/lib/design';
+import { typography, useLifeOSColors } from '@/lib/design';
 
 type Props = {
   progress: number;
@@ -20,13 +20,15 @@ export function ProgressRing({
   progress,
   size = 112,
   strokeWidth = 6,
-  color = colors.violet,
+  color,
   label,
   arcDegrees = 360,
   valueStyle,
   labelStyle,
   children,
 }: Props) {
+  const colors = useLifeOSColors();
+  const accent = color ?? colors.violet;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const arcLength = circumference * (Math.max(0, Math.min(360, arcDegrees)) / 360);
@@ -52,7 +54,7 @@ export function ProgressRing({
           cx={size / 2}
           cy={size / 2}
           r={radius}
-          stroke={color}
+          stroke={accent}
           strokeWidth={strokeWidth}
           fill="none"
           strokeDasharray={`${arcLength} ${circumference}`}
@@ -64,8 +66,8 @@ export function ProgressRing({
       <View style={styles.center}>
         {children ?? (
           <>
-            <Text style={[styles.value, valueStyle]}>{Math.round(clamped)}</Text>
-            {label ? <Text style={[styles.label, labelStyle]}>{label}</Text> : null}
+            <Text style={[styles.value, { color: colors.textPrimary }, valueStyle]}>{Math.round(clamped)}</Text>
+            {label ? <Text style={[styles.label, { color: colors.textMuted }, labelStyle]}>{label}</Text> : null}
           </>
         )}
       </View>
@@ -89,10 +91,8 @@ const styles = StyleSheet.create({
   },
   value: {
     ...typography.h1,
-    color: colors.textPrimary,
   },
   label: {
     ...typography.labelCaps,
-    color: colors.textMuted,
   },
 });

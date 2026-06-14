@@ -1,7 +1,7 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, spacing, typography } from '@/lib/design';
+import { spacing, typography, useLifeOSColors } from '@/lib/design';
 
 type Props = {
   time: string;
@@ -13,22 +13,25 @@ type Props = {
   onToggleComplete?: () => void;
 };
 
-export function TimelineItem({ time, title, subtitle, color = colors.violet, tag, completed = false, onToggleComplete }: Props) {
+export function TimelineItem({ time, title, subtitle, color, tag, completed = false, onToggleComplete }: Props) {
+  const colors = useLifeOSColors();
+  const accent = color ?? colors.violet;
+
   return (
     <View style={styles.row}>
-      <Text style={styles.time}>{time}</Text>
+      <Text style={[styles.time, { color: colors.textMuted }]}>{time}</Text>
       <View style={styles.axis}>
-        <View style={[styles.node, { backgroundColor: color }]} />
+        <View style={[styles.node, { backgroundColor: accent }]} />
       </View>
-      <View style={styles.content}>
+      <View style={[styles.content, { borderLeftColor: colors.borderLight }]}>
         <View style={styles.titleRow}>
           <View style={styles.titleWrap}>
-            <Text style={[styles.title, completed && styles.completedTitle]}>{title}</Text>
-            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+            <Text style={[styles.title, { color: colors.textPrimary }, completed && { color: colors.textSecondary }]}>{title}</Text>
+            {subtitle ? <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text> : null}
           </View>
           {tag ? (
-            <View style={[styles.tag, { borderColor: color }]}>
-              <Text style={[styles.tagText, { color }]}>{tag}</Text>
+            <View style={[styles.tag, { borderColor: accent }]}>
+              <Text style={[styles.tagText, { color: accent }]}>{tag}</Text>
             </View>
           ) : null}
           {onToggleComplete ? (
@@ -36,11 +39,11 @@ export function TimelineItem({ time, title, subtitle, color = colors.violet, tag
               accessibilityRole="button"
               accessibilityLabel={completed ? 'Mark task incomplete' : 'Mark task complete'}
               onPress={onToggleComplete}
-              style={[styles.checkButton, completed && { backgroundColor: color, borderColor: color }]}>
+              style={[styles.checkButton, { borderColor: colors.border }, completed && { backgroundColor: accent, borderColor: accent }]}>
               <Ionicons
                 name={completed ? 'checkmark' : 'ellipse-outline'}
                 size={18}
-                color={completed ? colors.background : color}
+                color={completed ? colors.background : accent}
               />
             </TouchableOpacity>
           ) : null}
@@ -67,13 +70,11 @@ const styles = StyleSheet.create({
     width: 8,
   },
   content: {
-    borderLeftColor: colors.borderLight,
     flex: 1,
     paddingBottom: spacing.sm,
   },
   time: {
     ...typography.labelCaps,
-    color: colors.textMuted,
     paddingTop: 2,
     width: 58,
   },
@@ -88,16 +89,13 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.body,
-    color: colors.textPrimary,
     fontWeight: '700',
   },
   completedTitle: {
-    color: colors.textSecondary,
     textDecorationLine: 'line-through',
   },
   subtitle: {
     ...typography.body,
-    color: colors.textSecondary,
   },
   tag: {
     borderRadius: 999,
@@ -113,7 +111,6 @@ const styles = StyleSheet.create({
   },
   checkButton: {
     alignItems: 'center',
-    borderColor: colors.border,
     borderRadius: 15,
     borderWidth: 1,
     height: 30,

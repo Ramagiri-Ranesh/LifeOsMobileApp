@@ -20,7 +20,7 @@ import { MacroBar } from '@/components/ui/MacroBar';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 // Clone yesterday is paused for now. Keep the helper import path here for quick reactivation:
 // import { cloneYesterdayMeals } from '@/lib/cloneYesterday';
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { MEAL_META, MEAL_ORDER } from '@/lib/nutritionSchedule';
 import {
   type FoodItem,
@@ -79,6 +79,8 @@ function macroTotals(meals: Meal[]) {
 
 export default function NutritionScreen() {
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const calorieGoal = useUserStore((state) => state.calorieGoal);
   const macros = useUserStore((state) => state.macros);
 
@@ -559,7 +561,8 @@ export default function NutritionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: {
     backgroundColor: colors.background,
     flex: 1,
@@ -1047,4 +1050,5 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: spacing.xs,
   },
-});
+  });
+}

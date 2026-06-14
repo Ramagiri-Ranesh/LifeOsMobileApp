@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors } from '@/lib/design';
 
 type Props = {
   label: string;
@@ -10,20 +10,22 @@ type Props = {
   unit?: string;
 };
 
-export function MacroBar({ label, current, target, color = colors.emerald, unit = 'g' }: Props) {
+export function MacroBar({ label, current, target, color, unit = 'g' }: Props) {
+  const colors = useLifeOSColors();
+  const accent = color ?? colors.emerald;
   const progress = target > 0 ? Math.max(0, Math.min(1, current / target)) : 0;
 
   return (
     <View style={styles.container}>
       <View style={styles.row}>
-        <Text style={styles.label}>{label}</Text>
-        <Text style={styles.value}>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
+        <Text style={[styles.value, { color: colors.textPrimary }]}>
           {current}/{target}
           {unit}
         </Text>
       </View>
-      <View style={styles.track}>
-        <View style={[styles.fill, { backgroundColor: color, width: `${progress * 100}%` }]} />
+      <View style={[styles.track, { backgroundColor: colors.surface3 }]}>
+        <View style={[styles.fill, { backgroundColor: accent, width: `${progress * 100}%` }]} />
       </View>
     </View>
   );
@@ -39,15 +41,12 @@ const styles = StyleSheet.create({
   },
   label: {
     ...typography.body,
-    color: colors.textSecondary,
   },
   value: {
     ...typography.body,
-    color: colors.textPrimary,
   },
   track: {
     height: 8,
-    backgroundColor: colors.surface3,
     borderRadius: radii.pill,
     overflow: 'hidden',
   },

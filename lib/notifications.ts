@@ -5,14 +5,23 @@ import { Platform } from 'react-native';
 
 import { getDailyBrief, getWeeklyReview } from '@/lib/ai';
 import { supabase } from '@/lib/supabase';
+import { useGoalsStore } from '@/stores/useGoalsStore';
 import { useGymStore } from '@/stores/useGymStore';
-import { useHabitsStore } from '@/stores/useHabitsStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
 
 const LIFEOS_ANOMALY_TASK = 'lifeos-ai-anomaly-alerts';
+const LIFEOS_RECURRING_SCHEDULER = 'lifeos_recurring';
+const TASK_REMINDER_SCHEDULER = 'task_reminder';
+const LIFEOS_RECURRING_KINDS = [
+  'daily_brief',
+  'nutrition_reminder',
+  'workout_reminder',
+  'evening_review',
+  'weekly_summary',
+];
 
 type NotificationRoute =
   | '/(tabs)'
@@ -51,6 +60,19 @@ type RouterLike = {
 };
 
 type NotificationsModule = typeof import('expo-notifications');
+
+export type TaskNotificationScheduleResult =
+  | { scheduled: true }
+  | {
+      scheduled: false;
+      reason:
+        | 'unsupported_runtime'
+        | 'permission_denied'
+        | 'invalid_date'
+        | 'past_time'
+        | 'schedule_failed';
+      message: string;
+    };
 
 let notificationsModule: NotificationsModule | null | undefined;
 let notificationHandlerConfigured = false;
@@ -160,25 +182,33 @@ function workoutForToday() {
 function aggregateWeeklyData() {
   const nutrition = useNutritionStore.getState();
   const gym = useGymStore.getState();
-  const habits = useHabitsStore.getState();
-  const goalsHit = habits.habits.length
-    ? Math.round((habits.habits.filter((habit) => habit.completedToday).length / habits.habits.length) * 100)
-    : 74;
+  const weeklyGoals = useGoalsStore.getState().weeklyGoals;
+  const goalProgress = weeklyGoals.length
+    ? Math.round(weeklyGoals.reduce((total, goal) => total + goal.progress, 0) / weeklyGoals.length)
+    : 0;
 
   return {
     week: weekNumber(),
-    goalsHit,
+    goalProgress,
     gymSessions: Math.max(gym.activeSession.length > 0 ? 1 : 0, Math.min(useUserStore.getState().profile?.gymDaysPerWeek ?? 4, 3)),
     averageCalories: nutrition.calories || 2180,
     caloriesToday: nutrition.calories,
     meals: nutrition.todaysMeals,
-    habitStreaks: habits.habits.map((habit) => ({ name: habit.name, streak: habit.streak })),
     workoutSplit: gym.currentSplit,
   };
 }
 
 async function requestNotificationPermissions(notifications: NotificationsModule) {
   if (Platform.OS === 'web' || isExpoGoNotificationsUnsupported()) return false;
+
+  if (Platform.OS === 'android') {
+    await notifications.setNotificationChannelAsync('lifeos-reminders', {
+      name: 'LifeOS reminders',
+      importance: notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#7C3AED',
+    });
+  }
 
   const existing = await notifications.getPermissionsAsync();
   if (existing.granted) return true;
@@ -318,7 +348,7 @@ async function scheduleRepeatingNotification(params: {
     kind: params.kind,
     route: params.route,
     scheduledAt: nextScheduledAt(params.time, params.weekday),
-    metadata: params.data,
+    metadata: { ...params.data, scheduler: LIFEOS_RECURRING_SCHEDULER },
   });
   const trigger = params.weekday
     ? ({ type: notifications.SchedulableTriggerInputTypes.WEEKLY, weekday: params.weekday, hour, minute } as const)
@@ -328,7 +358,7 @@ async function scheduleRepeatingNotification(params: {
     content: {
       title: params.title,
       body: params.body,
-      data: { ...params.data, userId, notificationId: notificationRecord?.id },
+      data: { ...params.data, scheduler: LIFEOS_RECURRING_SCHEDULER, userId, notificationId: notificationRecord?.id },
     },
     trigger,
   });
@@ -344,12 +374,24 @@ export async function scheduleTaskNotification(params: {
   notes?: string | null;
   date: string;
   time: string;
-}) {
+}): Promise<TaskNotificationScheduleResult> {
   const notifications = getNotifications();
-  if (!notifications) return false;
+  if (!notifications) {
+    return {
+      scheduled: false,
+      reason: 'unsupported_runtime',
+      message: 'Android Expo Go cannot schedule LifeOS phone notifications. Use a development build or installed app for real reminders.',
+    };
+  }
 
   const granted = await requestNotificationPermissions(notifications);
-  if (!granted) return false;
+  if (!granted) {
+    return {
+      scheduled: false,
+      reason: 'permission_denied',
+      message: 'Notification permission is off. Enable notifications for LifeOS in device settings and try again.',
+    };
+  }
 
   const { hour, minute } = parseTime(params.time);
   const [yearRaw, monthRaw, dayRaw] = params.date.split('-');
@@ -357,10 +399,22 @@ export async function scheduleTaskNotification(params: {
   const month = Number(monthRaw);
   const day = Number(dayRaw);
 
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return {
+      scheduled: false,
+      reason: 'invalid_date',
+      message: 'Use a valid task date in YYYY-MM-DD format.',
+    };
+  }
 
   const triggerAt = new Date(year, month - 1, day, hour, minute);
-  if (triggerAt.getTime() <= Date.now()) return false;
+  if (triggerAt.getTime() <= Date.now()) {
+    return {
+      scheduled: false,
+      reason: 'past_time',
+      message: 'The reminder time is already past. Choose a future time and save again.',
+    };
+  }
   const userId = useUserStore.getState().currentUserId;
   const body = params.notes || 'Your task is due now.';
   const notificationRecord = await createNotificationRecord({
@@ -372,23 +426,42 @@ export async function scheduleTaskNotification(params: {
     relatedEntityType: 'task',
     relatedEntityId: params.taskId,
     scheduledAt: triggerAt.toISOString(),
-    metadata: { action: 'taskReminder', taskId: params.taskId },
+    metadata: { scheduler: TASK_REMINDER_SCHEDULER, action: 'taskReminder', taskId: params.taskId },
   });
 
-  const identifier = await notifications.scheduleNotificationAsync({
-    content: {
-      title: `Task time: ${params.title}`,
-      body,
-      data: { route: '/(tabs)', action: 'taskReminder', taskId: params.taskId, userId, notificationId: notificationRecord?.id },
-    },
-    trigger: { type: notifications.SchedulableTriggerInputTypes.DATE, date: triggerAt },
-  });
+  try {
+    const identifier = await notifications.scheduleNotificationAsync({
+      content: {
+        title: `Task time: ${params.title}`,
+        body,
+        data: {
+          route: '/(tabs)',
+          scheduler: TASK_REMINDER_SCHEDULER,
+          action: 'taskReminder',
+          taskId: params.taskId,
+          userId,
+          notificationId: notificationRecord?.id,
+        },
+      },
+      trigger: { type: notifications.SchedulableTriggerInputTypes.DATE, date: triggerAt },
+    });
 
-  if (notificationRecord?.id) {
-    await supabase.from('notifications').update({ device_notification_id: identifier }).eq('id', notificationRecord.id);
+    if (notificationRecord?.id) {
+      await supabase.from('notifications').update({ device_notification_id: identifier }).eq('id', notificationRecord.id);
+    }
+  } catch (error) {
+    console.warn('Unable to schedule task notification', error);
+    if (notificationRecord?.id) {
+      await supabase.from('notifications').update({ delivery_status: 'failed' }).eq('id', notificationRecord.id);
+    }
+    return {
+      scheduled: false,
+      reason: 'schedule_failed',
+      message: 'LifeOS could not schedule the device reminder. Check notification permission and exact alarm settings.',
+    };
   }
 
-  return true;
+  return { scheduled: true };
 }
 
 export async function cancelTaskNotification(taskId: string) {
@@ -408,6 +481,47 @@ export async function cancelTaskNotification(taskId: string) {
   return taskNotifications.length > 0;
 }
 
+function isLifeOSRecurringNotification(data: { scheduler?: string; action?: string; route?: string; taskId?: string }) {
+  if (data.scheduler === LIFEOS_RECURRING_SCHEDULER) return true;
+  if (data.scheduler === TASK_REMINDER_SCHEDULER || data.action === 'taskReminder' || data.taskId) return false;
+
+  return (
+    data.action === 'dailyHub' ||
+    data.action === 'reflection' ||
+    data.action === 'weeklyReview' ||
+    data.route === '/(tabs)/nutrition' ||
+    data.route === '/(tabs)/gym' ||
+    data.route === '/(tabs)/analytics'
+  );
+}
+
+async function cancelLifeOSRecurringNotifications(notifications: NotificationsModule) {
+  const scheduled = await notifications.getAllScheduledNotificationsAsync();
+  const recurringNotifications = scheduled.filter((notification) => {
+    const data = notification.content.data as { scheduler?: string; action?: string; route?: string; taskId?: string };
+    return isLifeOSRecurringNotification(data);
+  });
+
+  await Promise.all(
+    recurringNotifications.map((notification) => notifications.cancelScheduledNotificationAsync(notification.identifier)),
+  );
+
+  return recurringNotifications.length;
+}
+
+async function clearPendingLifeOSReminderRecords(userId?: string | null) {
+  if (!userId) return;
+
+  const { error } = await supabase
+    .from('notifications')
+    .delete()
+    .eq('user_id', userId)
+    .eq('delivery_status', 'scheduled')
+    .in('kind', LIFEOS_RECURRING_KINDS);
+
+  if (error) console.warn('Unable to clear pending recurring reminder records', error.message);
+}
+
 export async function scheduleLifeOSNotifications() {
   const notifications = getNotifications();
   if (!notifications) return false;
@@ -422,7 +536,8 @@ export async function scheduleLifeOSNotifications() {
   const workoutLabel = workoutForToday();
   const weekly = aggregateWeeklyData();
 
-  await notifications.cancelAllScheduledNotificationsAsync();
+  await cancelLifeOSRecurringNotifications(notifications);
+  await clearPendingLifeOSReminderRecords(user.currentUserId);
 
   if (settings.notifications.morning) {
     let brief = 'Check your plan and start with breakfast.';
@@ -492,7 +607,7 @@ export async function scheduleLifeOSNotifications() {
 
     await scheduleRepeatingNotification({
       title: `Week ${weekly.week} complete`,
-      body: `${weekly.goalsHit}% goals hit, ${weekly.gymSessions} gym sessions, avg ${weekly.averageCalories.toLocaleString()} kcal`,
+      body: `${weekly.goalProgress}% goal progress, ${weekly.gymSessions} gym sessions, avg ${weekly.averageCalories.toLocaleString()} kcal`,
       time: settings.notificationTimes.weekly,
       weekday: 1,
       data: { route: '/(tabs)/analytics', action: 'weeklyReview', weekly },
@@ -563,7 +678,6 @@ async function runAnomalyCheck() {
     calorieGoal: useUserStore.getState().calorieGoal,
     gymGoalPerWeek: useUserStore.getState().profile?.gymDaysPerWeek ?? useUserStore.getState().onboardingProfile.gymDaysPerWeek,
     meals: useNutritionStore.getState().todaysMeals,
-    habits: useHabitsStore.getState().habits,
   };
 
   const { data, error } = await supabase.functions.invoke('lifeos-anomaly-alerts', { body: payload });
@@ -639,6 +753,7 @@ export function exportSettingsBackup() {
         quietHours: settings.quietHours,
         notificationTimes: settings.notificationTimes,
         aiModel: settings.aiModel,
+        appMode: settings.appMode,
         appLockEnabled: settings.appLockEnabled,
       },
     },

@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProgressRing } from '@/components/ui/ProgressRing';
-import { colors, radii, shadows, spacing, typography } from '@/lib/design';
+import { colors as defaultColors, radii, shadows, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { buildWorkoutTemplates, type PlannedWorkoutTemplate } from '@/lib/workoutPlan';
@@ -95,12 +95,12 @@ const TABS: { id: GoalsTab; label: string }[] = [
 ];
 
 const DEFAULT_CATEGORIES = [
-  { name: 'Learning', color: colors.indigo, icon: 'book-outline' },
-  { name: 'Work', color: colors.blue, icon: 'briefcase-outline' },
-  { name: 'Health', color: colors.emerald, icon: 'fitness-outline' },
+  { name: 'Learning', color: defaultColors.indigo, icon: 'book-outline' },
+  { name: 'Work', color: defaultColors.blue, icon: 'briefcase-outline' },
+  { name: 'Health', color: defaultColors.emerald, icon: 'fitness-outline' },
 ];
 
-const GYM_CATEGORY = { name: 'Gym', color: colors.amber, icon: 'barbell-outline' };
+const GYM_CATEGORY = { name: 'Gym', color: defaultColors.amber, icon: 'barbell-outline' };
 const GYM_MONTHLY_TITLE = 'Gym sessions';
 const GYM_WEEKLY_TITLE = 'Gym sessions this week';
 
@@ -662,6 +662,8 @@ async function ensureGymGoalFlow(args: {
 export default function GoalsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const profile = useUserStore((state) => state.profile);
   const generatedPlan = useUserStore((state) => state.generatedPlan);
@@ -1664,7 +1666,8 @@ export default function GoalsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { gap: spacing.sm, paddingHorizontal: spacing.gutter },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
@@ -1991,4 +1994,5 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: { color: colors.textPrimary, fontSize: 15, fontWeight: '800' },
   disabledButton: { opacity: 0.6 },
-});
+  });
+}

@@ -1,7 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors } from '@/lib/design';
 
 type Props = {
   value: string | number;
@@ -10,24 +10,24 @@ type Props = {
   accentColor?: string;
 };
 
-export function StatCard({ value, label, trend = 'flat', accentColor = colors.violet }: Props) {
+export function StatCard({ value, label, trend = 'flat', accentColor }: Props) {
+  const colors = useLifeOSColors();
+  const accent = accentColor ?? colors.violet;
   const iconName = trend === 'up' ? 'trending-up' : trend === 'down' ? 'trending-down' : 'remove';
 
   return (
-    <View style={styles.card}>
-      <View style={[styles.iconWrap, { backgroundColor: `${accentColor}22` }]}>
-        <Ionicons name={iconName} color={accentColor} size={18} />
+    <View style={[styles.card, { backgroundColor: colors.surface1, borderColor: colors.borderLight }]}>
+      <View style={[styles.iconWrap, { backgroundColor: `${accent}22` }]}>
+        <Ionicons name={iconName} color={accent} size={18} />
       </View>
-      <Text style={styles.value}>{value}</Text>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.value, { color: colors.textPrimary }]}>{value}</Text>
+      <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surface1,
-    borderColor: colors.borderLight,
     borderRadius: radii.card,
     borderWidth: 1,
     gap: spacing.xs,
@@ -42,10 +42,8 @@ const styles = StyleSheet.create({
   },
   value: {
     ...typography.stats,
-    color: colors.textPrimary,
   },
   label: {
     ...typography.body,
-    color: colors.textSecondary,
   },
 });

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -26,7 +26,9 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Ellipse, Path, Rect } from 'react-native-svg';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { BodyProgressModal } from '@/components/body/BodyProgressModal';
+import { saveBodyMetric } from '@/lib/bodyMetrics';
+import { colors as fallbackColors, radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
 import { completeTodayWorkoutTask } from '@/lib/workoutTasks';
 import { buildTodaysWorkoutTemplate, buildWorkoutTemplates, todayKey, type PlannedWorkoutTemplate } from '@/lib/workoutPlan';
@@ -74,6 +76,22 @@ type CompletedWorkoutSummary = {
 };
 
 const REST_SECONDS = 90;
+
+type GymTheme = {
+  colors: ColorPalette;
+  styles: ReturnType<typeof createStyles>;
+};
+
+const fallbackGymTheme: GymTheme = {
+  colors: fallbackColors,
+  styles: createStyles(fallbackColors),
+};
+
+const GymThemeContext = createContext<GymTheme>(fallbackGymTheme);
+
+function useGymTheme() {
+  return useContext(GymThemeContext);
+}
 
 const EXERCISE_LIBRARY: Array<{ name: string; muscleGroup: MuscleGroup; defaultWeight: number; defaultReps: number }> = [
   { name: 'Barbell Bench Press', muscleGroup: 'chest', defaultWeight: 70, defaultReps: 8 },
@@ -170,10 +188,14 @@ function formatRest(seconds: number) {
 export default function GymScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
   const isCompactWidth = width < 390;
   const profile = useUserStore((state) => state.profile);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const generatedPlan = useUserStore((state) => state.generatedPlan);
+  const setProfile = useUserStore((state) => state.setProfile);
   const workoutTemplates = useMemo(
     () => buildWorkoutTemplates(generatedPlan, profile).map(templateFromPlan),
     [generatedPlan, profile],
@@ -199,6 +221,7 @@ export default function GymScreen() {
   const [setWeight, setSetWeight] = useState('');
   const [setReps, setSetReps] = useState('');
   const [bodyWeight, setBodyWeight] = useState('');
+  const [bodyModalVisible, setBodyModalVisible] = useState(false);
   const [restRemaining, setRestRemaining] = useState(0);
   const [timerPaused, setTimerPaused] = useState(false);
   const [workoutCompleted, setWorkoutCompleted] = useState(false);
@@ -239,7 +262,6 @@ export default function GymScreen() {
       return hours <= 48 ? `${titleCase(muscle)}: ${48 - hours}h rest` : null;
     })
     .find(Boolean);
-
   const pulseStyle = useAnimatedStyle(() => ({
     borderColor: pulse.value > 0.5 ? colors.amberLight : colors.amber,
     shadowOpacity: 0.18 + pulse.value * 0.32,
@@ -531,7 +553,8 @@ export default function GymScreen() {
       if (rows.length > 0) await supabase.from('workout_sets').insert(rows);
       const weight = Number(bodyWeight);
       if (Number.isFinite(weight) && weight > 0) {
-        await supabase.from('body_metrics').insert({ user_id: currentUserId, date: completedAt.toISOString().slice(0, 10), weight_kg: weight });
+        await saveBodyMetric({ userId: currentUserId, date: completedAt.toISOString().slice(0, 10), weightKg: weight });
+        if (profile) setProfile({ ...profile, weightKg: weight });
       }
       await completeTodayWorkoutTask(template, currentUserId);
       setWorkoutCompleted(true);
@@ -550,7 +573,7 @@ export default function GymScreen() {
       setSavingWorkout(false);
       Alert.alert('Workout complete', 'Saved locally for this session. Check Supabase columns if persistence failed.');
     }
-  }, [bodyWeight, currentUserId, exercises, hasTodayWorkout, newPrs, savingWorkout, setTotals.done, startedAt, stopTimer, template, volume, workoutCompleted]);
+  }, [bodyWeight, currentUserId, exercises, hasTodayWorkout, newPrs, profile, savingWorkout, setProfile, setTotals.done, startedAt, stopTimer, template, volume, workoutCompleted]);
 
   const renderExercise = ({ item }: { item: Exercise }) => {
     const status = statusFor(item);
@@ -609,6 +632,7 @@ export default function GymScreen() {
   };
 
   return (
+    <GymThemeContext.Provider value={theme}>
     <View style={styles.screen}>
       <FlatList
         data={workoutCompleted ? [] : exercises}
@@ -625,6 +649,9 @@ export default function GymScreen() {
               <View style={styles.headerTop}>
                 <Text style={styles.headerLabel}>Today's Workout</Text>
                 <View style={styles.headerActions}>
+                  <TouchableOpacity accessibilityLabel="Log body progress" style={styles.historyButton} onPress={() => setBodyModalVisible(true)}>
+                    <Ionicons name="scale-outline" size={22} color={colors.amberLight} />
+                  </TouchableOpacity>
                   <TouchableOpacity accessibilityLabel="Check week schedule" style={styles.historyButton} onPress={() => setScheduleModalVisible(true)}>
                     <Ionicons name="calendar-outline" size={22} color={colors.amberLight} />
                   </TouchableOpacity>
@@ -883,11 +910,16 @@ export default function GymScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <BodyProgressModal visible={bodyModalVisible} onClose={() => setBodyModalVisible(false)} />
     </View>
+    </GymThemeContext.Provider>
   );
 }
 
 function StatTile({ label, value }: { label: string; value: string }) {
+  const { styles } = useGymTheme();
+
   return (
     <View style={styles.statTile}>
       <Text style={styles.statValue}>{value}</Text>
@@ -903,6 +935,7 @@ function MuscleHeatmap({
   activeMuscles: MuscleGroup[];
   recentMuscles: Partial<Record<MuscleGroup, string>>;
 }) {
+  const { colors, styles } = useGymTheme();
   const active = new Set(activeMuscles);
   const fill = (muscle: MuscleGroup) => {
     if (active.has(muscle)) return colors.amber;
@@ -954,7 +987,8 @@ function titleCase(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   screen: {
     backgroundColor: colors.background,
     flex: 1,
@@ -1693,4 +1727,5 @@ const styles = StyleSheet.create({
     minHeight: 62,
     paddingHorizontal: spacing.sm,
   },
-});
+  });
+}

@@ -20,12 +20,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { DomainBadge } from '@/components/ui/DomainBadge';
+import { BodyProgressModal } from '@/components/body/BodyProgressModal';
 import { LifeOSCard } from '@/components/ui/LifeOSCard';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { TimelineItem } from '@/components/ui/TimelineItem';
-import { calculateGoalScore, calculateLifeScore } from '@/lib/calculations';
 import { getDailyBrief } from '@/lib/ai';
-import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/design';
+import { canRecalibrateBodyPlan, loadBodyMetrics, type BodyMetricLog } from '@/lib/bodyMetrics';
+import { domainsForColors, radii, spacing, typography, useLifeOSColors, type ColorPalette, type Domain } from '@/lib/design';
+import { calculateDailyLifeScore, persistDailyLifeScore } from '@/lib/lifeScore';
 import { mealFallbackTime } from '@/lib/nutritionSchedule';
 import { cancelTaskNotification, countUnreadNotifications, scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
@@ -75,6 +77,11 @@ function todayKey(date = new Date()) {
   const month = `${date.getMonth() + 1}`.padStart(2, '0');
   const day = `${date.getDate()}`.padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function dateFromKey(key: string) {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year, month - 1, day);
 }
 
 function timeOfDay(date = new Date()) {
@@ -128,6 +135,10 @@ function formatHeaderDate(date = new Date()) {
   }).format(date);
 }
 
+function formatShortDate(date: Date) {
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(date);
+}
+
 function asText(value: Json | undefined, fallback = '') {
   return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
 }
@@ -158,6 +169,43 @@ function taskTime(row: LooseRow) {
 
 function taskTitle(row: LooseRow) {
   return asText(row.title) || asText(row.name) || asText(row.task) || 'Untitled task';
+}
+
+function taskMinutes(row: LooseRow) {
+  const rawTime = taskTime(row).trim();
+  const meridiemMatch = rawTime.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (meridiemMatch) {
+    const hourRaw = Number(meridiemMatch[1]);
+    const minute = Number(meridiemMatch[2]);
+    const meridiem = meridiemMatch[3].toUpperCase();
+    if (!Number.isInteger(hourRaw) || !Number.isInteger(minute)) return null;
+    const hour = meridiem === 'PM' ? (hourRaw % 12) + 12 : hourRaw % 12;
+    return hour * 60 + minute;
+  }
+
+  const twentyFourHourMatch = rawTime.match(/^(\d{1,2}):(\d{2})$/);
+  if (twentyFourHourMatch) {
+    const hour = Number(twentyFourHourMatch[1]);
+    const minute = Number(twentyFourHourMatch[2]);
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59) return null;
+    return hour * 60 + minute;
+  }
+
+  return null;
+}
+
+function isTaskPending(row: LooseRow, now = new Date()) {
+  if (isTaskDone(row)) return false;
+
+  const date = rowDate(row);
+  const today = todayKey(now);
+  if (date && date < today) return true;
+  if (date && date > today) return false;
+
+  const minutes = taskMinutes(row);
+  if (minutes === null) return false;
+
+  return minutes < now.getHours() * 60 + now.getMinutes();
 }
 
 function dedupeTasks(rows: LooseRow[]) {
@@ -206,12 +254,16 @@ export default function DailyHubScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ reflection?: string }>();
   const insets = useSafeAreaInsets();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const domains = useMemo(() => domainsForColors(colors), [colors]);
   const profile = useUserStore((state) => state.profile);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const onboardingCompleted = useUserStore((state) => state.onboardingCompleted);
   const onboardingProfile = useUserStore((state) => state.onboardingProfile);
   const generatedPlan = useUserStore((state) => state.generatedPlan);
   const calorieGoal = useUserStore((state) => state.calorieGoal);
+  const macros = useUserStore((state) => state.macros);
   const waterTargetMl = useUserStore((state) => state.waterTargetMl);
   const todaysMeals = useNutritionStore((state) => state.todaysMeals);
   const calories = useNutritionStore((state) => state.calories);
@@ -232,6 +284,8 @@ export default function DailyHubScreen() {
   const [taskModalVisible, setTaskModalVisible] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [bodyModalVisible, setBodyModalVisible] = useState(false);
+  const [bodyLogs, setBodyLogs] = useState<BodyMetricLog[]>([]);
   const [taskForm, setTaskForm] = useState<AddTaskForm>({
     title: '',
     date: todayKey(),
@@ -256,6 +310,15 @@ export default function DailyHubScreen() {
       : workoutTask && isTaskDone(workoutTask)
         ? 'Workout done'
         : `${todaysWorkout.name} planned`;
+  const latestWeightLog = useMemo(
+    () => bodyLogs.filter((log) => typeof log.weightKg === 'number' && log.weightKg > 0).sort((a, b) => b.date.localeCompare(a.date))[0] ?? null,
+    [bodyLogs],
+  );
+  const bodyBriefLine = latestWeightLog
+    ? latestWeightLog.date === todayKey()
+      ? `Weight ${latestWeightLog.weightKg} kg logged today. Keep logging daily so your trend stays honest.`
+      : `Last weight was ${latestWeightLog.weightKg} kg on ${formatShortDate(dateFromKey(latestWeightLog.date))}. Log today to keep the trend accurate.`
+    : 'No weight logged yet. Add today\'s weight to start your real progress trend.';
 
   const planItems = useMemo<PlanItem[]>(() => {
     const mealItems = todaysMeals.map((meal) => ({
@@ -268,23 +331,31 @@ export default function DailyHubScreen() {
       kind: 'meal' as const,
     }));
 
-    const taskItems = tasks.map((task, index) => ({
-      id: asText(task.id, `task-${index}`),
-      time: taskTime(task),
-      title: taskTitle(task),
-      subtitle: isTaskDone(task)
-        ? 'Completed'
-        : isWorkoutTask(task) && activeSession.length > 0
-          ? `${activeSession.length} sets completed`
-          : asText(task.notes) || asText(task.description),
-      domain: isWorkoutTask(task) ? 'fitness' as const : 'goals' as const,
-      tag: isTaskDone(task) ? 'Done' : isWorkoutTask(task) ? 'Gym' : 'Task',
-      kind: 'task' as const,
-      completed: isTaskDone(task),
-    }));
+    const taskItems = tasks.map((task, index) => {
+      const completed = isTaskDone(task);
+      const pending = isTaskPending(task, currentTime);
+      const notes = asText(task.notes) || asText(task.description);
+
+      return {
+        id: asText(task.id, `task-${index}`),
+        time: taskTime(task),
+        title: taskTitle(task),
+        subtitle: completed
+          ? 'Completed'
+          : pending
+            ? notes || `Pending since ${taskTime(task)}`
+            : isWorkoutTask(task) && activeSession.length > 0
+              ? `${activeSession.length} sets completed`
+              : notes,
+        domain: pending ? 'alert' as const : isWorkoutTask(task) ? 'fitness' as const : 'goals' as const,
+        tag: completed ? 'Done' : pending ? 'Pending' : isWorkoutTask(task) ? 'Gym' : 'Task',
+        kind: 'task' as const,
+        completed,
+      };
+    });
 
     return [...mealItems, ...taskItems];
-  }, [activeSession.length, tasks, todaysMeals]);
+  }, [activeSession.length, currentTime, tasks, todaysMeals]);
 
   const loadToday = useCallback(async () => {
     if (!currentUserId || !profile || !onboardingCompleted) {
@@ -300,6 +371,14 @@ export default function DailyHubScreen() {
       waterRequest,
     ]);
     setUnreadNotifications(await countUnreadNotifications(currentUserId));
+    let loadedBodyLogs: BodyMetricLog[] = [];
+    try {
+      loadedBodyLogs = await loadBodyMetrics(currentUserId, 45);
+      setBodyLogs(loadedBodyLogs);
+    } catch (error) {
+      console.warn('Unable to load body metrics for brief', error);
+      setBodyLogs([]);
+    }
 
     if (taskError) console.warn('Unable to load tasks', taskError.message);
     if (waterError) console.warn('Unable to load water log', waterError.message);
@@ -316,25 +395,42 @@ export default function DailyHubScreen() {
       ((waterRows ?? []) as LooseRow[]).reduce((total, row) => total + waterGlasses(row), 0),
     );
     const nextWater = glasses;
-    const nutritionScore = calculateGoalScore(Math.min(calories, calorieGoal), calorieGoal);
+    const completedTodayTasks = todayTasks.filter(isTaskDone).length;
+    const highPriorityTasks = todayTasks.filter((task) => asText(task.priority).toLowerCase() === 'high');
+    const completedHighPriorityTasks = highPriorityTasks.filter(isTaskDone).length;
+    const overdueTasks = todayTasks.filter((task) => isTaskPending(task, new Date())).length;
+    const protein = todaysMeals.reduce((total, meal) => total + meal.protein, 0);
     const workoutDone = todaysWorkout.isRestDay || todayTasks.some((task) => isWorkoutTask(task) && isTaskDone(task));
-    const fitnessScore = workoutDone ? 85 : activeSession.length > 0 ? 70 : 45;
-    const productivityScore =
-      todayTasks.length > 0 ? calculateGoalScore(todayTasks.filter(isTaskDone).length, todayTasks.length) : 50;
-    const habitsScore = calculateGoalScore(nextWater, waterGoalGlasses);
-    const score = calculateLifeScore({
-      nutritionScore,
-      fitnessScore,
-      productivityScore,
-      habitsScore,
-      alignmentScore: 50,
+    const scoreResult = calculateDailyLifeScore({
+      calories,
+      calorieGoal,
+      protein,
+      proteinGoal: macros.protein,
+      waterMl: nextWater * WATER_GLASS_ML,
+      waterTargetMl,
+      totalTasks: todayTasks.length,
+      completedTasks: completedTodayTasks,
+      overdueTasks,
+      highPriorityTasks: highPriorityTasks.length,
+      completedHighPriorityTasks,
+      isRestDay: todaysWorkout.isRestDay,
+      workoutCompleted: workoutDone,
+      activeSetCount: activeSession.length,
     });
+    const score = scoreResult.lifeScore;
     const nextTaskProgress = `${todayTasks.filter(isTaskDone).length}/${todayTasks.length}`;
+    const loadedLatestWeight = loadedBodyLogs
+      .filter((log) => typeof log.weightKg === 'number' && log.weightKg > 0)
+      .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
+    const loadedLatestMetrics = loadedBodyLogs.find((log) => log.waistCm || log.chestCm || log.armCm || log.hipCm || log.thighCm) ?? null;
+    const loadedGenerationReady = canRecalibrateBodyPlan(profile.lastBodyRecalibrationAt) && Boolean(loadedLatestWeight);
 
     setTasks(todayTasks);
     setWaterCount(nextWater);
     setWaterMl(nextWater * WATER_GLASS_ML);
     setLifeScore(score);
+    const { error: scoreError } = await persistDailyLifeScore(currentUserId, date, scoreResult);
+    if (scoreError) console.warn('Unable to persist life score', scoreError.message);
 
     try {
       const insight = await getDailyBrief({
@@ -346,6 +442,12 @@ export default function DailyHubScreen() {
         tasks: todayTasks.map((task) => ({ title: taskTitle(task), done: isTaskDone(task) })),
         meals: todaysMeals,
         workout: { activeSets: activeSession.length, split: todaysWorkout.splitName, today: todaysWorkout.name },
+        bodyProgress: {
+          latestWeightKg: loadedLatestWeight?.weightKg,
+          latestWeightDate: loadedLatestWeight?.date,
+          latestMetricsDate: loadedLatestMetrics?.date,
+          twoWeekGenerationReady: loadedGenerationReady,
+        },
       });
       setBrief(insight.trim().split('\n')[0] || fallbackBrief(score, caloriesRemaining, nextTaskProgress));
     } catch (error) {
@@ -360,6 +462,7 @@ export default function DailyHubScreen() {
     dayPeriod.greeting,
     generatedPlan,
     currentUserId,
+    macros.protein,
     onboardingCompleted,
     profile,
     setLifeScore,
@@ -482,7 +585,7 @@ export default function DailyHubScreen() {
     }
 
     if (taskForm.notify) {
-      const scheduled = await scheduleTaskNotification({
+      const scheduleResult = await scheduleTaskNotification({
         taskId: asText((data as LooseRow | null)?.id),
         title,
         notes: taskForm.notes.trim() || null,
@@ -490,8 +593,8 @@ export default function DailyHubScreen() {
         time: taskForm.time,
       });
 
-      if (!scheduled) {
-        Alert.alert('Task saved', 'Notification was not scheduled. Pick a future time and allow notifications on your device.');
+      if (!scheduleResult.scheduled) {
+        Alert.alert('Task saved', scheduleResult.message);
       }
     }
 
@@ -612,10 +715,10 @@ export default function DailyHubScreen() {
   }, [currentUserId, syncLinkedGoalProgress, tasks]);
 
   const actions: ActionTile[] = [
+    { label: 'AI Coach', icon: 'sparkles-outline', onPress: () => router.push('/ai-coach' as never) },
     { label: 'Log Meal', icon: 'restaurant-outline', onPress: () => router.push('/(tabs)/nutrition') },
     { label: 'Start Workout', icon: 'barbell-outline', onPress: () => router.push('/(tabs)/gym') },
     { label: 'Add Task', icon: 'add-circle-outline', onPress: openTaskModal },
-    { label: 'Log Water', icon: 'water-outline', onPress: addWater },
   ];
 
   return (
@@ -632,6 +735,13 @@ export default function DailyHubScreen() {
           <Text style={styles.name}>{name}</Text>
         </View>
         <View style={styles.headerRight}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Open weight log"
+            onPress={() => setBodyModalVisible(true)}
+            style={styles.notificationButton}>
+            <Ionicons name="scale-outline" size={20} color={colors.textPrimary} />
+          </TouchableOpacity>
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="Open notifications"
@@ -746,6 +856,7 @@ export default function DailyHubScreen() {
         <Text numberOfLines={2} style={styles.briefText}>
           {brief}
         </Text>
+        <Text style={styles.weightBriefText}>{bodyBriefLine}</Text>
       </LifeOSCard>
     </ScrollView>
 
@@ -897,11 +1008,14 @@ export default function DailyHubScreen() {
         </View>
       </KeyboardAvoidingView>
     </Modal>
+
+    <BodyProgressModal visible={bodyModalVisible} onClose={() => setBodyModalVisible(false)} onChanged={refreshToday} />
     </>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   content: {
     gap: spacing.sm,
     paddingBottom: spacing.xl,
@@ -1030,6 +1144,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.inner,
     borderWidth: 1,
     flex: 1,
+    minWidth: 0,
     gap: spacing.xs,
     justifyContent: 'center',
     minHeight: 86,
@@ -1085,6 +1200,13 @@ const styles = StyleSheet.create({
   briefText: {
     ...typography.body,
     color: colors.textSecondary,
+  },
+  weightBriefText: {
+    color: colors.emeraldLight,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 18,
+    marginTop: spacing.xs,
   },
   modalOverlay: {
     backgroundColor: 'rgba(0,0,0,0.58)',
@@ -1261,4 +1383,5 @@ const styles = StyleSheet.create({
   disabledButton: {
     opacity: 0.6,
   },
-});
+  });
+}

@@ -97,14 +97,13 @@ Keeping Finance inside Goals would make `goals.tsx` too large and would make mon
 
 ### Decision 2: Do Not Add Finance To Bottom Tabs Yet
 
-The bottom tab bar already has seven tabs:
+The bottom tab bar already has six tabs:
 
 - Home
 - Diet
 - Gym
 - Goals
 - Analytics
-- Habits
 - Settings
 
 Adding Finance as an eighth bottom tab would make navigation crowded. V1 should use the existing standalone route:
@@ -403,7 +402,6 @@ Bottom tabs
   Gym
   Goals
   Analytics
-  Habits
   Settings
 
 Standalone routes

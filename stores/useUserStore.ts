@@ -45,6 +45,8 @@ export type UserProfile = {
   firstMealTime?: string;
   lastMealTime?: string;
   aiCalcCalories?: boolean;
+  lastBodyRecalibrationAt?: string | null;
+  bodyRecalibrationCount?: number;
 };
 
 export type OnboardingProfile = {

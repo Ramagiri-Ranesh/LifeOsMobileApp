@@ -1,7 +1,8 @@
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { colors, spacing, typography } from '@/lib/design';
+import { spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 
 type Props = {
   title: string;
@@ -11,6 +12,9 @@ type Props = {
 };
 
 export function ScreenHeader({ title, onBack, actionIcon, onAction }: Props) {
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.header}>
       {onBack ? (
@@ -32,7 +36,8 @@ export function ScreenHeader({ title, onBack, actionIcon, onAction }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   header: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -53,4 +58,5 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-});
+  });
+}

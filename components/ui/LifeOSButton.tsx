@@ -1,7 +1,8 @@
 import type { PropsWithChildren } from 'react';
+import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, type PressableProps } from 'react-native';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 
 type Props = PropsWithChildren<
   PressableProps & {
@@ -10,6 +11,9 @@ type Props = PropsWithChildren<
 >;
 
 export function LifeOSButton({ children, variant = 'primary', style, ...props }: Props) {
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <Pressable
       style={({ pressed }) => [
@@ -24,7 +28,8 @@ export function LifeOSButton({ children, variant = 'primary', style, ...props }:
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   base: {
     minHeight: 48,
     alignItems: 'center',
@@ -51,4 +56,5 @@ const styles = StyleSheet.create({
   secondaryText: {
     color: colors.violetLight,
   },
-});
+  });
+}

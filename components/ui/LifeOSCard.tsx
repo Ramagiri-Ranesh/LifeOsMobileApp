@@ -1,7 +1,7 @@
 import type { PropsWithChildren } from 'react';
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors } from '@/lib/design';
 
 type Props = PropsWithChildren<{
   title?: string;
@@ -9,10 +9,22 @@ type Props = PropsWithChildren<{
   style?: ViewStyle;
 }>;
 
-export function LifeOSCard({ title, accentColor = colors.violet, style, children }: Props) {
+export function LifeOSCard({ title, accentColor, style, children }: Props) {
+  const colors = useLifeOSColors();
+  const accent = accentColor ?? colors.violet;
+
   return (
-    <View style={[styles.card, { borderTopColor: accentColor }, style]}>
-      {title ? <Text style={styles.title}>{title}</Text> : null}
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.surface1,
+          borderColor: colors.borderLight,
+          borderTopColor: accent,
+        },
+        style,
+      ]}>
+      {title ? <Text style={[styles.title, { color: colors.textSecondary }]}>{title}</Text> : null}
       {children}
     </View>
   );
@@ -20,8 +32,6 @@ export function LifeOSCard({ title, accentColor = colors.violet, style, children
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surface1,
-    borderColor: colors.borderLight,
     borderTopWidth: 2,
     borderWidth: 1,
     borderRadius: radii.card,
@@ -29,7 +39,6 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.labelCaps,
-    color: colors.textSecondary,
     marginBottom: spacing.xs,
     textTransform: 'uppercase',
   },

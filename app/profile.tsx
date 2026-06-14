@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LifeOSCard } from '@/components/ui/LifeOSCard';
 import { profileFromRow } from '@/lib/profile';
-import { colors, radii, spacing, typography } from '@/lib/design';
+import { radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
 import { useUserStore, type UserProfile } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
@@ -73,6 +73,9 @@ function Field({
   editable: boolean;
   keyboardType?: 'default' | 'numeric' | 'numbers-and-punctuation';
 }) {
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -89,6 +92,8 @@ function Field({
 }
 
 export default function ProfileScreen() {
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const profile = useUserStore((state) => state.profile);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const calorieGoal = useUserStore((state) => state.calorieGoal);
@@ -283,7 +288,8 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   root: { backgroundColor: colors.background, flex: 1 },
   content: { gap: spacing.sm, padding: spacing.lg, paddingBottom: spacing.xl },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
@@ -352,4 +358,5 @@ const styles = StyleSheet.create({
   },
   disabledButton: { opacity: 0.65 },
   saveText: { ...typography.body, color: colors.background, fontWeight: '800' },
-});
+  });
+}

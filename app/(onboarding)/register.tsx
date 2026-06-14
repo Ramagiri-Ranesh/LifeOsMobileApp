@@ -7,9 +7,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { hashPassword, normalizeUsername } from '@/lib/password';
 import { buildProfilePayload } from '@/lib/profile';
 import { colors, radii, spacing, typography } from '@/lib/design';
+import { saveAccountSettings } from '@/lib/settingsService';
 import { supabase } from '@/lib/supabase';
 import { syncWaterLog } from '@/lib/waterLog';
 import { useGymStore } from '@/stores/useGymStore';
+import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
 import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
@@ -30,6 +32,9 @@ export default function RegisterScreen() {
   const calorieGoal = useUserStore((state) => state.calorieGoal);
   const macros = useUserStore((state) => state.macros);
   const generatedPlan = useUserStore((state) => state.generatedPlan);
+  const aiModel = useSettingsStore((state) => state.aiModel);
+  const markSettingsSynced = useSettingsStore((state) => state.markSettingsSynced);
+  const markSettingsError = useSettingsStore((state) => state.markSettingsError);
   const setProfile = useUserStore((state) => state.setProfile);
   const setSession = useUserStore((state) => state.setSession);
   const completeOnboarding = useUserStore((state) => state.completeOnboarding);
@@ -77,6 +82,7 @@ export default function RegisterScreen() {
         calorieGoal,
         macros,
         generatedPlan,
+        aiModel,
       });
       const { data, error } = await supabase.from('profiles').insert(payload).select('*').single();
       if (error) throw error;
@@ -88,6 +94,13 @@ export default function RegisterScreen() {
         profile_id: savedId,
       });
       if (userError) throw userError;
+
+      const settingsSync = await saveAccountSettings(savedId);
+      if (settingsSync.ok) {
+        markSettingsSynced(settingsSync.syncedAt);
+      } else {
+        markSettingsError(settingsSync.error);
+      }
 
       const savedProfile = { ...profile, id: savedId, username: normalizedUsername };
       setSession({ userId: savedId, username: normalizedUsername });

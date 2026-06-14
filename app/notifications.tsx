@@ -18,19 +18,24 @@ import {
   markNotificationRead,
   type AppNotification,
 } from '@/lib/notifications';
-import { colors, domains, radii, spacing, typography } from '@/lib/design';
+import { domainsForColors, radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { useUserStore } from '@/stores/useUserStore';
 
-const KIND_META: Record<string, { icon: keyof typeof Ionicons.glyphMap; color: string; label: string }> = {
-  task_reminder: { icon: 'checkbox-outline', color: domains.goals.color, label: 'Task' },
-  daily_brief: { icon: 'sunny-outline', color: colors.violetLight, label: 'Brief' },
-  nutrition_reminder: { icon: 'restaurant-outline', color: domains.nutrition.color, label: 'Diet' },
-  workout_reminder: { icon: 'barbell-outline', color: domains.fitness.color, label: 'Gym' },
-  evening_review: { icon: 'moon-outline', color: colors.indigo, label: 'Review' },
-  weekly_summary: { icon: 'analytics-outline', color: colors.blueLight, label: 'Weekly' },
-  ai_alert: { icon: 'sparkles-outline', color: colors.amberLight, label: 'AI' },
-  system: { icon: 'notifications-outline', color: colors.violetLight, label: 'LifeOS' },
-};
+type KindMeta = { icon: keyof typeof Ionicons.glyphMap; color: string; label: string };
+
+function kindMetaForColors(colors: ColorPalette): Record<string, KindMeta> {
+  const domains = domainsForColors(colors);
+  return {
+    task_reminder: { icon: 'checkbox-outline', color: domains.goals.color, label: 'Task' },
+    daily_brief: { icon: 'sunny-outline', color: colors.violetLight, label: 'Brief' },
+    nutrition_reminder: { icon: 'restaurant-outline', color: domains.nutrition.color, label: 'Diet' },
+    workout_reminder: { icon: 'barbell-outline', color: domains.fitness.color, label: 'Gym' },
+    evening_review: { icon: 'moon-outline', color: colors.indigo, label: 'Review' },
+    weekly_summary: { icon: 'analytics-outline', color: colors.blueLight, label: 'Weekly' },
+    ai_alert: { icon: 'sparkles-outline', color: colors.amberLight, label: 'AI' },
+    system: { icon: 'notifications-outline', color: colors.violetLight, label: 'LifeOS' },
+  };
+}
 
 function formatWhen(value?: string) {
   if (!value) return 'Scheduled';
@@ -50,8 +55,8 @@ function formatWhen(value?: string) {
   }).format(date);
 }
 
-function metaFor(notification: AppNotification) {
-  return KIND_META[notification.kind] ?? KIND_META.system;
+function metaFor(notification: AppNotification, kindMeta: Record<string, KindMeta>) {
+  return kindMeta[notification.kind] ?? kindMeta.system;
 }
 
 function needsAttention(notification: AppNotification) {
@@ -62,6 +67,9 @@ function needsAttention(notification: AppNotification) {
 }
 
 export default function NotificationsScreen() {
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const kindMeta = useMemo(() => kindMetaForColors(colors), [colors]);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -143,7 +151,7 @@ export default function NotificationsScreen() {
           </LifeOSCard>
         ) : (
           notifications.map((notification) => {
-            const meta = metaFor(notification);
+            const meta = metaFor(notification, kindMeta);
             const unread = needsAttention(notification);
             return (
               <TouchableOpacity
@@ -173,7 +181,8 @@ export default function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   root: { backgroundColor: colors.background, flex: 1 },
   content: { gap: spacing.sm, padding: spacing.lg, paddingBottom: spacing.xl },
   header: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
@@ -240,4 +249,5 @@ const styles = StyleSheet.create({
     top: 10,
     width: 10,
   },
-});
+  });
+}

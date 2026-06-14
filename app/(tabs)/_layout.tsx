@@ -1,9 +1,11 @@
 import { Tabs } from 'expo-router';
 
 import { BottomNav } from '@/components/layout/BottomNav';
-import { colors } from '@/lib/design';
+import { useLifeOSColors } from '@/lib/design';
 
 export default function TabLayout() {
+  const colors = useLifeOSColors();
+
   return (
     <Tabs
       tabBar={(props) => <BottomNav {...props} />}
@@ -16,7 +18,6 @@ export default function TabLayout() {
       <Tabs.Screen name="gym" options={{ title: 'Gym' }} />
       <Tabs.Screen name="goals" options={{ title: 'Goals' }} />
       <Tabs.Screen name="analytics" options={{ title: 'Analytics' }} />
-      <Tabs.Screen name="habits" options={{ title: 'Habits' }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
     </Tabs>
   );

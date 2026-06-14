@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { hashPassword, normalizeUsername } from '@/lib/password';
 import { profileFromRow } from '@/lib/profile';
+import { hydrateAccountSettings } from '@/lib/settingsService';
 import { supabase } from '@/lib/supabase';
 import { useGymStore } from '@/stores/useGymStore';
 import { useUserStore } from '@/stores/useUserStore';
@@ -77,6 +78,7 @@ export default function LoginScreen() {
       setPlanTargets(restored.calorieGoal, restored.macros, restored.profile.waterTargetMl);
       if (restored.generatedPlan) setGeneratedPlan(restored.generatedPlan);
       setCurrentSplit(restored.generatedPlan?.workoutSplit ?? restored.profile.split);
+      await hydrateAccountSettings(userId);
       completeOnboarding();
       router.replace('/');
     } catch (error) {

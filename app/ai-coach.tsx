@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
@@ -16,12 +17,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { callAI, getActiveAIModelLabel, getPatternInsight } from '@/lib/ai';
-import { colors, shadows, spacing, typography } from '@/lib/design';
+import { colors as fallbackColors, shadows, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
 import { useAICoachStore, type CoachMessage, type CoachMessageType } from '@/stores/useAICoachStore';
 import { useGoalsStore } from '@/stores/useGoalsStore';
 import { useGymStore } from '@/stores/useGymStore';
-import { useHabitsStore } from '@/stores/useHabitsStore';
 import { useNutritionStore, type FoodItem, type Meal } from '@/stores/useNutritionStore';
 import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
@@ -41,7 +41,6 @@ type CoachContext = {
   recentMeals: unknown[];
   recentWorkouts: unknown[];
   weeklyGoals: unknown[];
-  habitStreaks: unknown[];
   recentLifeScores: unknown[];
   selectedChips: string[];
 };
@@ -49,7 +48,27 @@ type CoachContext = {
 const CONTEXT_CHIPS = ['My diet today', "Today's workout", 'Weekly progress', 'Sleep last night'];
 const TODAY = new Date().toISOString().slice(0, 10);
 
+type AITheme = {
+  colors: ColorPalette;
+  styles: ReturnType<typeof createStyles>;
+};
+
+const fallbackAITheme: AITheme = {
+  colors: fallbackColors,
+  styles: createStyles(fallbackColors),
+};
+
+const AIThemeContext = createContext<AITheme>(fallbackAITheme);
+
+function useAITheme() {
+  return useContext(AIThemeContext);
+}
+
 function asNumber(value: Json | undefined, fallback = 0) {
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
@@ -89,9 +108,9 @@ function goalsSummary(weeklyGoals: ReturnType<typeof useGoalsStore.getState>['we
   return weeklyGoals.map((goal) => `${goal.title}: ${goal.progress}%`).join(' | ');
 }
 
-function streakSummary(habits: ReturnType<typeof useHabitsStore.getState>['habits'], gymStreak: number) {
-  const habitText = habits.length > 0 ? habits.map((habit) => `${habit.name} ${habit.streak}d`).join(', ') : 'No habit streaks loaded';
-  return `${habitText}. Gym streak ${gymStreak}d.`;
+function streakSummary(gymStreak: number) {
+  if (gymStreak > 0) return `Gym streak ${gymStreak}d.`;
+  return 'No gym streak loaded yet.';
 }
 
 function formatChipContext(chips: string[], summaries: Record<string, string>) {
@@ -103,11 +122,12 @@ function inferMessageType(text: string): CoachMessageType {
   const lower = text.toLowerCase();
   if (lower.includes('meal') || lower.includes('protein') || lower.includes('calorie')) return 'meal-suggestion';
   if (lower.includes('workout') || lower.includes('sets') || lower.includes('reps')) return 'workout-tip';
-  if (lower.includes('goal') || lower.includes('target') || lower.includes('habit')) return 'goal-recommendation';
+  if (lower.includes('goal') || lower.includes('target')) return 'goal-recommendation';
   return 'text';
 }
 
 function Dot({ delay }: { delay: number }) {
+  const { styles } = useAITheme();
   const opacity = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
@@ -126,6 +146,8 @@ function Dot({ delay }: { delay: number }) {
 }
 
 function TypingIndicator() {
+  const { styles } = useAITheme();
+
   return (
     <View style={[styles.messageRow, styles.aiRow]}>
       <View style={[styles.bubble, styles.aiBubble, styles.typingBubble]}>
@@ -138,6 +160,7 @@ function TypingIndicator() {
 }
 
 function MessageCard({ message, onAddMeal }: { message: CoachMessage; onAddMeal: (message: CoachMessage) => void }) {
+  const { colors, styles } = useAITheme();
   const isUser = message.role === 'user';
   const icon =
     message.type === 'meal-suggestion' ? 'restaurant-outline' : message.type === 'workout-tip' ? 'barbell-outline' : 'flag-outline';
@@ -181,7 +204,6 @@ async function loadRecentContext(
   activeSession: ReturnType<typeof useGymStore.getState>['activeSession'],
   currentSplit: string,
   weeklyGoals: ReturnType<typeof useGoalsStore.getState>['weeklyGoals'],
-  habits: ReturnType<typeof useHabitsStore.getState>['habits'],
   gymStreak: number,
   currentUserId: string | null,
 ): Promise<CoachContext> {
@@ -205,14 +227,20 @@ async function loadRecentContext(
             .limit(5)
         : supabase.from('workout_sessions').select('*').limit(0),
       supabase.from('weekly_goals').select('*').limit(20),
-      supabase.from('life_scores').select('*').order('created_at', { ascending: false }).limit(10),
+      currentUserId
+        ? supabase
+            .from('life_scores')
+            .select('*')
+            .eq('user_id', currentUserId)
+            .order('created_at', { ascending: false })
+            .limit(10)
+        : supabase.from('life_scores').select('*').limit(0),
     ]);
 
     return {
       recentMeals: mealLogs.data ?? [{ date: TODAY, meals: todaysMeals }],
       recentWorkouts: workouts.data ?? [{ activeSession, currentSplit }],
       weeklyGoals: goals.data ?? weeklyGoals,
-      habitStreaks: habits.map((habit) => ({ name: habit.name, streak: habit.streak, completedToday: habit.completedToday })),
       recentLifeScores: lifeScores.data ?? [],
       selectedChips: [],
     };
@@ -222,7 +250,6 @@ async function loadRecentContext(
       recentMeals: [{ date: TODAY, meals: todaysMeals }],
       recentWorkouts: [{ activeSession, currentSplit }],
       weeklyGoals,
-      habitStreaks: habits.map((habit) => ({ name: habit.name, streak: habit.streak, completedToday: habit.completedToday })),
       recentLifeScores: [],
       selectedChips: [],
     };
@@ -250,19 +277,20 @@ function buildNutrientAlert(todaysMeals: Meal[], proteinTarget: number, recentMe
   return 'Protein target is on track today. Keep the final meal balanced and light.';
 }
 
-function buildStreakWin(habits: ReturnType<typeof useHabitsStore.getState>['habits'], gymStreak: number) {
-  const bestHabit = [...habits].sort((a, b) => b.streak - a.streak)[0];
-  if (bestHabit && bestHabit.streak > 0) return `${bestHabit.name} is on a ${bestHabit.streak}-day streak. Protect that momentum today.`;
+function buildStreakWin(gymStreak: number) {
   if (gymStreak > 0) return `Gym streak is at ${gymStreak} days. One focused session keeps the chain alive.`;
-  return 'Fresh streak window today. One small completion is enough to start the next run.';
+  return 'Fresh training window today. One focused session is enough to start the next run.';
 }
 
 export default function AICoachScreen() {
+  const router = useRouter();
+  const colors = useLifeOSColors();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
   const { messages, addMessage, updateMessage, loadPersistedMessages, persistRecentMessages } = useAICoachStore();
   const { todaysMeals, logMealItem } = useNutritionStore();
   const { activeSession, currentSplit, streak: gymStreak } = useGymStore();
   const { weeklyGoals } = useGoalsStore();
-  const { habits } = useHabitsStore();
   const { currentUserId, macros } = useUserStore();
 
   const [input, setInput] = useState('');
@@ -288,7 +316,7 @@ export default function AICoachScreen() {
     {
       id: 'streak',
       title: 'Streak win',
-      text: 'Your habit streak is building. One completion today locks the milestone.',
+      text: 'Your gym streak is building. One focused session today locks the milestone.',
       accent: colors.emerald,
       background: colors.emeraldBg,
       icon: 'sparkles-outline',
@@ -299,7 +327,7 @@ export default function AICoachScreen() {
       'My diet today': mealSummary(todaysMeals),
       "Today's workout": workoutSummary(activeSession, currentSplit),
       'Weekly progress': goalsSummary(weeklyGoals),
-      'Sleep last night': 'Use recent life scores and habit notes to infer sleep recovery if logged.',
+      'Sleep last night': 'Use recent life scores to infer sleep recovery if logged.',
     }),
     [activeSession, currentSplit, todaysMeals, weeklyGoals],
   );
@@ -312,7 +340,7 @@ export default function AICoachScreen() {
     let cancelled = false;
 
     async function loadInsights() {
-      const nextContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, habits, gymStreak, currentUserId);
+      const nextContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, gymStreak, currentUserId);
       if (cancelled) return;
 
       let pattern = "You're 40% more focused on gym days. Keep workouts near high-focus tasks.";
@@ -344,7 +372,7 @@ export default function AICoachScreen() {
           {
             id: 'streak',
             title: 'Streak win',
-            text: buildStreakWin(habits, gymStreak),
+            text: buildStreakWin(gymStreak),
             accent: colors.emerald,
             background: colors.emeraldBg,
             icon: 'sparkles-outline',
@@ -357,7 +385,7 @@ export default function AICoachScreen() {
     return () => {
       cancelled = true;
     };
-  }, [activeSession, currentSplit, currentUserId, gymStreak, habits, macros.protein, todaysMeals, weeklyGoals]);
+  }, [activeSession, colors, currentSplit, currentUserId, gymStreak, macros.protein, todaysMeals, weeklyGoals]);
 
   const toggleChip = (chip: string) => {
     setSelectedChips((current) => (current.includes(chip) ? current.filter((item) => item !== chip) : [...current, chip]));
@@ -385,13 +413,13 @@ export default function AICoachScreen() {
     setIsProcessing(true);
 
     try {
-      const freshContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, habits, gymStreak, currentUserId);
+      const freshContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, gymStreak, currentUserId);
       const response = await callAI(trimmed, {
         ...freshContext,
         last7DaysMeals: freshContext.recentMeals,
         last5Workouts: freshContext.recentWorkouts,
         currentWeekGoals: weeklyGoals,
-        habitStreaks: streakSummary(habits, gymStreak),
+        streaks: streakSummary(gymStreak),
         recentLifeScores: freshContext.recentLifeScores,
         selectedChips,
         selectedChipContext: chipContext,
@@ -428,9 +456,23 @@ export default function AICoachScreen() {
   const listData = useMemo(() => [...messages].reverse(), [messages]);
 
   return (
+    <AIThemeContext.Provider value={theme}>
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Close AI Coach"
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/(tabs)' as never);
+              }
+            }}
+            style={styles.backButton}>
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+          </TouchableOpacity>
           <View>
             <Text style={styles.title}>AI Coach</Text>
             <Text style={styles.lastInsight}>Last insight: 2 hours ago</Text>
@@ -469,7 +511,7 @@ export default function AICoachScreen() {
           ListEmptyComponent={
             <View style={styles.emptyState}>
               <Text style={styles.emptyTitle}>Ask for the next best move.</Text>
-              <Text style={styles.emptyText}>Your coach can use meals, workouts, goals, habits, and recent scores as context.</Text>
+              <Text style={styles.emptyText}>Your coach can use meals, workouts, goals, and recent scores as context.</Text>
             </View>
           }
           renderItem={({ item }) => <MessageCard message={item} onAddMeal={handleAddMeal} />}
@@ -516,10 +558,12 @@ export default function AICoachScreen() {
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </AIThemeContext.Provider>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: ColorPalette) {
+  return StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,
@@ -536,6 +580,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.gutter,
     paddingTop: spacing.xs,
     paddingBottom: spacing.sm,
+  },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
   },
   title: {
     ...typography.h1,
@@ -758,4 +812,5 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     opacity: 0.45,
   },
-});
+  });
+}

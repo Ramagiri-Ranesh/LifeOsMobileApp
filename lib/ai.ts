@@ -1,5 +1,4 @@
 import { useGymStore } from '@/stores/useGymStore';
-import { useHabitsStore } from '@/stores/useHabitsStore';
 import { useNutritionStore } from '@/stores/useNutritionStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
@@ -23,7 +22,6 @@ function buildSystemContext(context?: AIContext) {
   const user = useUserStore.getState();
   const nutrition = useNutritionStore.getState();
   const gym = useGymStore.getState();
-  const habits = useHabitsStore.getState();
 
   return {
     profile: user.profile,
@@ -31,7 +29,6 @@ function buildSystemContext(context?: AIContext) {
     macros: user.macros,
     todaysMeals: nutrition.todaysMeals,
     currentWorkoutSplit: gym.currentSplit,
-    habitStreaks: habits.habits.map((habit) => ({ name: habit.name, streak: habit.streak })),
     foodsToAvoid: user.foodsToAvoid,
     cuisinePreference: user.cuisinePreference,
     ...context,
@@ -118,13 +115,13 @@ export const getMealSuggestion = (context?: AIContext) =>
   );
 
 export const getWeeklyReview = (context?: AIContext) =>
-  callAI('Write a concise weekly review across nutrition, gym, goals, habits, and finance.', context);
+  callAI('Write a concise weekly review across nutrition, gym, goals, and finance.', context);
 
 export const getDailyBrief = (context?: AIContext) =>
   callAI('Create one concise daily command-center sentence with the most important next action. Return plain text only, no markdown.', context);
 
 export const getPatternInsight = () =>
-  callAI('Identify one pattern from recent meals, workouts, habits, and goals.');
+  callAI('Identify one pattern from recent meals, workouts, and goals.');
 
 export const getNaturalLanguageTask = (task: string) =>
   callAI(`Convert this natural-language task into structured LifeOS task metadata: ${task}`);

@@ -4,10 +4,10 @@ import { DarkTheme, Stack, ThemeProvider, useRouter, useSegments } from 'expo-ro
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
 import 'react-native-reanimated';
 
-import { colors } from '@/lib/design';
+import { colors, colorsForAppMode } from '@/lib/design';
 import {
   registerLifeOSBackgroundTasks,
   registerNotificationReceivedHandler,
@@ -56,6 +56,9 @@ function RootLayoutNav() {
   const segments = useSegments();
   const { currentUserId, hasRegisteredBefore, onboardingCompleted, profile } = useUserStore();
   const appLockEnabled = useSettingsStore((state) => state.appLockEnabled);
+  const appMode = useSettingsStore((state) => state.appMode);
+  const systemMode = useColorScheme();
+  const modeColors = colorsForAppMode(appMode, systemMode === 'light' ? 'light' : 'dark');
   const [unlocked, setUnlocked] = useState(!appLockEnabled);
   const isReady = Boolean(currentUserId && profile && onboardingCompleted);
 
@@ -101,26 +104,29 @@ function RootLayoutNav() {
     ...DarkTheme,
     colors: {
       ...DarkTheme.colors,
-      background: colors.background,
-      card: colors.surface1,
-      border: colors.border,
-      primary: colors.violet,
-      text: colors.textPrimary,
+      background: modeColors.background,
+      card: modeColors.surface1,
+      border: modeColors.border,
+      primary: modeColors.violet,
+      text: modeColors.textPrimary,
     },
   };
 
   return (
     <ThemeProvider value={lifeOSTheme}>
       {!unlocked ? (
-        <View style={styles.lockScreen}>
-          <Text style={styles.lockTitle}>LifeOS locked</Text>
-          <Text style={styles.lockBody}>Authenticate to continue.</Text>
-          <TouchableOpacity accessibilityRole="button" onPress={unlockApp} style={styles.lockButton}>
-            <Text style={styles.lockButtonText}>Unlock</Text>
+        <View style={[styles.lockScreen, { backgroundColor: modeColors.background }]}>
+          <Text style={[styles.lockTitle, { color: modeColors.textPrimary }]}>LifeOS locked</Text>
+          <Text style={[styles.lockBody, { color: modeColors.textSecondary }]}>Authenticate to continue.</Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={unlockApp}
+            style={[styles.lockButton, { backgroundColor: modeColors.violetLight }]}>
+            <Text style={[styles.lockButtonText, { color: modeColors.background }]}>Unlock</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <Stack screenOptions={{ contentStyle: { backgroundColor: colors.background }, headerShown: false }}>
+        <Stack screenOptions={{ contentStyle: { backgroundColor: modeColors.background }, headerShown: false }}>
           <Stack.Screen name="(onboarding)" />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="ai-coach" options={{ presentation: 'modal' }} />

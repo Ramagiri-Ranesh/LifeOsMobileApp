@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, domains, radii, spacing, typography, type Domain } from '@/lib/design';
+import { domainsForColors, radii, spacing, typography, type Domain, useLifeOSColors } from '@/lib/design';
 
 type Props = {
   domain: Domain;
@@ -8,7 +8,8 @@ type Props = {
 };
 
 export function DomainBadge({ domain, label = domain }: Props) {
-  const token = domains[domain];
+  const colors = useLifeOSColors();
+  const token = domainsForColors(colors)[domain];
 
   return (
     <View style={[styles.badge, { backgroundColor: token.background, borderColor: token.color }]}>
@@ -28,7 +29,6 @@ const styles = StyleSheet.create({
   },
   text: {
     ...typography.labelCaps,
-    color: colors.textPrimary,
     textTransform: 'uppercase',
   },
 });

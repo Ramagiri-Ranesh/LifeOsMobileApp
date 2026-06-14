@@ -47,14 +47,14 @@ export function calculateLifeScore(scores: {
   nutritionScore: number;
   fitnessScore: number;
   productivityScore: number;
-  habitsScore: number;
+  hydrationScore: number;
   alignmentScore: number;
 }) {
   return Math.round(
     clampScore(scores.nutritionScore) * 0.25 +
       clampScore(scores.fitnessScore) * 0.25 +
       clampScore(scores.productivityScore) * 0.2 +
-      clampScore(scores.habitsScore) * 0.2 +
+      clampScore(scores.hydrationScore) * 0.2 +
       clampScore(scores.alignmentScore) * 0.1,
   );
 }
