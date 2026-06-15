@@ -8,6 +8,7 @@
     "scheme": "lifeos",
     "userInterfaceStyle": "dark",
     "ios": {
+      "bundleIdentifier": "com.lifeos.app",
       "supportsTablet": true,
       "infoPlist": {
         "UIBackgroundModes": [
@@ -29,7 +30,7 @@
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT"
       ],
-      "package": "com.anonymous.LifeOS"
+      "package": "com.lifeos.app"
     },
     "web": {
       "bundler": "metro",
@@ -47,7 +48,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#08080F"
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

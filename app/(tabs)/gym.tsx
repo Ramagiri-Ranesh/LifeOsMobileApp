@@ -29,6 +29,7 @@ import Svg, { Circle, Ellipse, Path, Rect } from 'react-native-svg';
 import { BodyProgressModal } from '@/components/body/BodyProgressModal';
 import { saveBodyMetric } from '@/lib/bodyMetrics';
 import { colors as fallbackColors, radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
+import { hapticLight, hapticSuccess } from '@/lib/haptics';
 import { supabase } from '@/lib/supabase';
 import { completeTodayWorkoutTask } from '@/lib/workoutTasks';
 import { buildTodaysWorkoutTemplate, buildWorkoutTemplates, todayKey, type PlannedWorkoutTemplate } from '@/lib/workoutPlan';
@@ -466,6 +467,7 @@ export default function GymScreen() {
     if (estimated > previousBest) {
       setNewPrs((records) => ({ ...records, [selectedExercise.name]: true }));
     }
+    hapticLight();
     setStartedAt((value) => value ?? new Date());
     setLogSetVisible(false);
     startRestTimer();
@@ -566,6 +568,7 @@ export default function GymScreen() {
       });
       setSavingWorkout(false);
       stopTimer();
+      hapticSuccess();
       Alert.alert('Workout saved', `${template.name} logged with ${Math.round(volume).toLocaleString()} kg total volume.`);
       router.push('/workout-history' as never);
     } catch (error) {

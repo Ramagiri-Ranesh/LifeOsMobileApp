@@ -21,6 +21,7 @@ import { ProgressRing } from '@/components/ui/ProgressRing';
 // Clone yesterday is paused for now. Keep the helper import path here for quick reactivation:
 // import { cloneYesterdayMeals } from '@/lib/cloneYesterday';
 import { radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
+import { hapticLight } from '@/lib/haptics';
 import { MEAL_META, MEAL_ORDER } from '@/lib/nutritionSchedule';
 import {
   type FoodItem,
@@ -221,6 +222,7 @@ export default function NutritionScreen() {
       saveAsTemplate,
       templateName,
     });
+    hapticLight();
     if (saveAsTemplate) showToast('Meal saved and template created');
     setLogModalVisible(false);
   }, [activeMealType, logMealItem, qty, saveAsTemplate, selectedDate, selectedFood, showToast, templateName]);
@@ -247,7 +249,14 @@ export default function NutritionScreen() {
     (mealType: MealType, itemId: string) => {
       Alert.alert('Delete food item?', 'This removes it from the meal log.', [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => void deleteMealItem(selectedDate, mealType, itemId) },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            hapticLight();
+            void deleteMealItem(selectedDate, mealType, itemId);
+          },
+        },
       ]);
     },
     [deleteMealItem, selectedDate],
@@ -502,6 +511,7 @@ export default function NutritionScreen() {
                   style={styles.templateRow}
                   onPress={async () => {
                     await applyTemplate(selectedDate, item.mealType, item);
+                    hapticLight();
                     setExpandedMeal(item.mealType);
                     setTemplateModalVisible(false);
                     showToast(`${item.name} added`);

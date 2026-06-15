@@ -54,8 +54,8 @@ LifeOS should help one user turn profile data and goals into daily execution:
 
 Current implementation:
 
-- OpenAI chat completions using `gpt-4o-mini` when `EXPO_PUBLIC_OPENAI_API_KEY` or `OPENAI_API_KEY` is present.
-- Local Ollama fallback at `http://localhost:11434/api/generate`.
+- OpenAI chat completions use the `lifeos-ai` Supabase Edge Function with server-side `OPENAI_API_KEY`.
+- Local Ollama fallback remains available at `http://localhost:11434/api/generate` when explicitly allowed.
 - Settings allows `openai` or `ollama`.
 
 Important product decision:
@@ -103,29 +103,28 @@ The tab navigator has six tabs:
 
 ### Placeholder Routes
 
-- `app/finance.tsx` is currently an empty dark screen.
+- `app/finance.tsx` is implemented as a standalone finance tracker.
 
-Finance currently lives inside the Goals tab, with a standalone placeholder route still present.
+Finance also has surfaces inside the Goals tab.
 
 ## 7. User And Account Model
 
-LifeOS uses a custom username/password flow, not Supabase Auth for the primary login path.
+LifeOS uses Supabase Auth for the primary username/password login path. The visible username is mapped to an internal auth email and stored on `profiles`.
 
 Registration flow:
 
 1. User completes onboarding and plan reveal.
 2. User chooses username and password.
-3. Password is hashed locally with `hashPassword`.
-4. App inserts a `profiles` row.
-5. App inserts an `app_users` row with `username`, `password_hash`, and `profile_id`.
-6. App initializes today's water log.
-7. App persists local session state.
+3. App creates a Supabase Auth account.
+4. App inserts a `profiles` row with `id = auth.users.id`.
+5. App initializes today's water log.
+6. App persists local session state.
 
 Login flow:
 
 1. User enters username and password.
-2. App calls `verify_app_login`.
-3. App loads the matching `profiles` row.
+2. App signs in with Supabase Auth.
+3. App loads the matching `profiles` row by auth user id.
 4. App restores profile, calorie target, macros, generated plan, workout split, and onboarding completion.
 
 ## 8. Implemented Screens
@@ -160,15 +159,14 @@ Purpose:
 Requirements:
 
 - Normalize username.
-- Hash password consistently.
-- Call `verify_app_login`.
-- Load profile by returned `profile_id`.
+- Sign in with Supabase Auth.
+- Load profile by auth user id.
 - Reject incomplete onboarding.
 - Restore generated plan and current split.
 
 Primary data:
 
-- `app_users`
+- Supabase Auth session
 - `profiles`
 
 ### 8.3 Basic Profile
@@ -264,23 +262,23 @@ Route: `app/(onboarding)/register.tsx`
 
 Purpose:
 
-- Persist completed onboarding and create app login credentials.
+- Persist completed onboarding and create a Supabase Auth-backed account.
 
 Requirements:
 
 - Require generated plan.
-- Require username length at least 3.
-- Require password length at least 6.
-- Check username availability with `app_username_exists`.
-- Insert profile payload.
-- Insert `app_users` credentials.
+- Require username to match the supported username format.
+- Require password length at least 12.
+- Check username availability with `profile_username_available`.
+- Create Supabase Auth user.
+- Insert profile payload with `profiles.id = auth.users.id`.
 - Initialize today's `water_log`.
 - Open tabs after success.
 
 Primary data:
 
 - `profiles`
-- `app_users`
+- Supabase Auth session
 - `water_log`
 
 ### 8.8 Daily Hub
@@ -426,7 +424,7 @@ Primary data:
 
 Product note:
 
-- This is a multi-domain screen today. The separate Finance route exists but is still a placeholder. The previous Learning screen/tab has been removed.
+- This is a multi-domain screen today. A standalone Finance route also exists. The previous Learning screen/tab has been removed.
 
 ### 8.13 Analytics
 
@@ -646,16 +644,16 @@ Responsibilities:
 | --- | --- | --- |
 | `profiles` | Created and evolved | Onboarding profile, targets, generated plan, preferences, account profile |
 | `water_log` | Created and constrained | Daily hydration by user/date |
-| `app_users` | Created | Custom username/password login linked to profile |
+| `app_users` | Legacy artifact | Locked by hardening migration; no longer used by app login |
 | `tasks` | Created and indexed | Daily tasks and generated workout tasks |
 | `notifications` | Created and indexed | Persisted app notification inbox and reminder delivery state |
 | `workout_sessions` | Altered only | Workout history/session persistence expects table to pre-exist |
 | `workout_sets` | Altered only | Set history expects table to pre-exist |
 | `body_metrics` | Altered only | Body-weight metrics expects table to pre-exist |
 
-Critical gap:
+Clean database status:
 
-- `workout_sessions`, `workout_sets`, and `body_metrics` are altered but not created in the visible migrations. A clean database may fail unless these tables exist from earlier migrations not present in this repo.
+- `workout_sessions`, `workout_sets`, and `body_metrics` are now created defensively before follow-up alterations.
 
 ### 10.2 Tables Referenced By Code Or Types But Missing Creation Migrations
 
@@ -682,7 +680,7 @@ Requirement:
 
 ### Account And Ownership
 
-- `app_users.profile_id` references `profiles.id`.
+- Supabase Auth owns credentials; `profiles.id` is the auth user id.
 - `tasks.user_id` references `profiles.id`.
 - `notifications.user_id` references `profiles.id`.
 - `water_log.user_id` references `profiles.id`.
@@ -720,9 +718,9 @@ Requirement:
 
 Current behavior:
 
-- `callAI` uses OpenAI only when `allowOpenAI` is passed, selected model is not `ollama`, and an OpenAI key exists.
+- `callAI` uses the `lifeos-ai` Edge Function by default when the selected model is not `ollama`.
 - Local Ollama is used only when `allowLocalAI` is passed.
-- Several calls do not pass either option, so they may return empty string and use fallback UI.
+- Empty or failed AI responses fall back to local UI copy or Ollama when enabled for that call.
 
 Required fixes:
 
@@ -771,18 +769,17 @@ Requirements:
 
 ## 14. Security And Privacy Requirements
 
-Current risks:
+Current controls:
 
-- Several RLS policies use `using (true)` and `with check (true)`.
-- Password hashing is local custom hashing, not Supabase Auth.
-- Broad anonymous grants exist for profile, water, tasks, workouts, and app user registration.
+- Supabase Auth is the production auth model.
+- Follow-up migration `202606140012_production_auth_rls_hardening.sql` replaces broad policies with owner-scoped `auth.uid()` checks.
+- Anonymous profile/table access is revoked; username availability is exposed through a narrow security-definer function.
+- OpenAI provider credentials are server-side in the `lifeos-ai` Edge Function.
 
 Required hardening:
 
-- Choose one auth model: Supabase Auth or custom `app_users`.
-- If keeping custom auth, every user-owned table must scope reads/writes by `currentUserId` profile id.
-- Replace broad RLS policies with owner-scoped checks.
-- Remove public profile reads before production.
+- Apply all migrations to the target Supabase project before release.
+- Keep public profile reads disabled.
 - Do not store or send unnecessary personal health data to AI providers.
 - Keep app lock optional and local-only.
 
@@ -835,5 +832,5 @@ These are product-owner decisions, not assumptions:
 - Should LifeOS be Android-only, or should iOS/web remain supported because `app.json` and package scripts include them?
 - Should AI provider be OpenAI/Ollama as implemented, or Gemini as a new migration?
 - Should Finance become a standalone screen, or stay inside Goals?
-- Should custom `app_users` remain, or should the project move to Supabase Auth?
+- Should the legacy `app_users` table be dropped after deployed accounts are migrated?
 - Should the app keep fallback demo data in production, or show explicit empty states until real data exists?

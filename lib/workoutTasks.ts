@@ -26,6 +26,26 @@ function matchesWorkoutTask(row: LooseRow, workout: WorkoutTaskPlan) {
   return isWorkoutTask(row) && asText(row.title) === workoutTaskTitle(workout);
 }
 
+function isDuplicateKeyError(error: { code?: string; message?: string } | null) {
+  return error?.code === '23505' || error?.message?.toLowerCase().includes('duplicate key');
+}
+
+async function findTodayWorkoutTask(workout: WorkoutTaskPlan, userId: string, date = todayKey()) {
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('date', date)
+    .eq('user_id', userId)
+    .eq('category', 'fitness');
+
+  if (error) {
+    console.warn('Unable to check workout task', error.message);
+    return null;
+  }
+
+  return (((data ?? []) as LooseRow[]).find((task) => matchesWorkoutTask(task, workout)) ?? null) as LooseRow | null;
+}
+
 export async function ensureTodayWorkoutTask(
   workout: WorkoutTaskPlan,
   userId: string,
@@ -40,19 +60,7 @@ export async function ensureTodayWorkoutTask(
   );
   if (existing) return existing;
 
-  const { data: rows, error: readError } = await supabase
-    .from('tasks')
-    .select('*')
-    .eq('date', date)
-    .eq('user_id', userId)
-    .eq('category', 'fitness');
-
-  if (readError) {
-    console.warn('Unable to check workout task', readError.message);
-    return null;
-  }
-
-  const found = ((rows ?? []) as LooseRow[]).find((task) => matchesWorkoutTask(task, workout));
+  const found = await findTodayWorkoutTask(workout, userId, date);
   if (found) return found;
 
   const { data, error } = await supabase
@@ -71,6 +79,9 @@ export async function ensureTodayWorkoutTask(
     .single();
 
   if (error) {
+    if (isDuplicateKeyError(error)) {
+      return findTodayWorkoutTask(workout, userId, date);
+    }
     console.warn('Unable to create workout task', error.message);
     return null;
   }

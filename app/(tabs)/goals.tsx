@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { colors as defaultColors, radii, shadows, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
+import { hapticLight } from '@/lib/haptics';
 import { scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 import { buildWorkoutTemplates, type PlannedWorkoutTemplate } from '@/lib/workoutPlan';
@@ -316,20 +317,19 @@ async function ensureDefaultCategories(userId: string) {
     }));
 
   if (missing.length > 0) {
-    const { error: insertError } = await supabase.from('goal_categories').insert(missing);
+    const insertResults = await Promise.all(missing.map((category) => supabase.from('goal_categories').insert(category)));
+    const insertError = insertResults.find((result) => result.error && !isDuplicateKeyError(result.error))?.error;
     if (insertError) throw new Error(insertError.message);
-
-    const { data: refreshed, error: refreshError } = await supabase
-      .from('goal_categories')
-      .select('*')
-      .eq('user_id', userId)
-      .order('sort_order', { ascending: true });
-
-    if (refreshError) throw new Error(refreshError.message);
-    return ((refreshed ?? []) as LooseRow[]).map(categoryFromRow);
   }
 
-  return existing;
+  const { data: refreshed, error: refreshError } = await supabase
+    .from('goal_categories')
+    .select('*')
+    .eq('user_id', userId)
+    .order('sort_order', { ascending: true });
+
+  if (refreshError) throw new Error(refreshError.message);
+  return ((refreshed ?? []) as LooseRow[]).map(categoryFromRow);
 }
 
 function rangeDateKeys(startKey: string, endKey: string) {
@@ -411,6 +411,10 @@ function workoutTaskTitle(workout: PlannedWorkoutTemplate) {
   return `Workout: ${workout.name}`;
 }
 
+function isDuplicateKeyError(error: { code?: string; message?: string } | null) {
+  return error?.code === '23505' || error?.message?.toLowerCase().includes('duplicate key');
+}
+
 function plannedWorkoutTasks(
   generatedPlan: GeneratedPlan | null | undefined,
   profile: UserProfile | null | undefined,
@@ -462,7 +466,9 @@ async function ensurePlannedWorkoutTasks(args: {
 
   plannedTasks.forEach(({ date, template }) => {
     const title = workoutTaskTitle(template);
-    const existing = existingRows.find((row) => asText(row.date).slice(0, 10) === date && asText(row.title) === title);
+    const existing = existingRows.find(
+      (row) => asText(row.date).slice(0, 10) === date && asText(row.title).toLowerCase() === title.toLowerCase(),
+    );
     const completedFromWorkout = completedDates.has(date);
 
     if (existing) {
@@ -505,8 +511,12 @@ async function ensurePlannedWorkoutTasks(args: {
   });
 
   if (inserts.length > 0) {
-    const { error } = await supabase.from('tasks').insert(inserts);
-    if (error) console.warn('Unable to create planned workout tasks', error.message);
+    const results = await Promise.all(inserts.map((insert) => supabase.from('tasks').insert(insert)));
+    results.forEach((result) => {
+      if (result.error && !isDuplicateKeyError(result.error)) {
+        console.warn('Unable to create planned workout task', result.error.message);
+      }
+    });
   }
 }
 
@@ -1046,6 +1056,7 @@ export default function GoalsScreen() {
       }
 
       setAddVisible(false);
+      hapticLight();
       await loadGoals();
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : 'Goal was not saved.';
@@ -1071,6 +1082,7 @@ export default function GoalsScreen() {
       const nextCompleted = !task.completed;
       const previous = dailyGoals;
       const nextRows = dailyGoals.map((item) => (item.id === task.id ? { ...item, completed: nextCompleted } : item));
+      hapticLight();
       setDailyGoals(nextRows);
 
       const { error: updateError } = await supabase

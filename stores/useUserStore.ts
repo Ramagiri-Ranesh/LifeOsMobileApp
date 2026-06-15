@@ -25,6 +25,7 @@ export type GeneratedPlan = {
 
 export type UserProfile = {
   id?: string;
+  authUserId?: string;
   username?: string;
   name: string;
   gender: 'male' | 'female';

@@ -145,6 +145,7 @@ export function profileFromRow(row: LooseRow): {
   return {
     profile: {
       id: asText(row.id),
+      authUserId: asText(row.auth_user_id),
       username: asText(row.username),
       name: asText(row.name, 'User'),
       gender: asGender(row.gender),

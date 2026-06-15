@@ -44,6 +44,10 @@ export type Database = {
         Args: { input_username: string };
         Returns: boolean;
       };
+      profile_username_available: {
+        Args: { input_username: string };
+        Returns: boolean;
+      };
       verify_app_login: {
         Args: { input_username: string; input_password_hash: string };
         Returns: Array<{ profile_id: string }>;

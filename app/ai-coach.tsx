@@ -13,10 +13,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { callAI, getActiveAIModelLabel, getPatternInsight } from '@/lib/ai';
+import { AIRequestError, callAI, getActiveAIModelLabel, getPatternInsight } from '@/lib/ai';
 import { colors as fallbackColors, shadows, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
 import { useAICoachStore, type CoachMessage, type CoachMessageType } from '@/stores/useAICoachStore';
@@ -284,6 +285,7 @@ function buildStreakWin(gymStreak: number) {
 
 export default function AICoachScreen() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const colors = useLifeOSColors();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const theme = useMemo(() => ({ colors, styles }), [colors, styles]);
@@ -331,6 +333,7 @@ export default function AICoachScreen() {
     }),
     [activeSession, currentSplit, todaysMeals, weeklyGoals],
   );
+  const insightCardWidth = Math.min(200, Math.max(156, Math.floor((width - spacing.gutter * 2 - spacing.sm) / 2)));
 
   useEffect(() => {
     loadPersistedMessages();
@@ -432,7 +435,11 @@ export default function AICoachScreen() {
       await persistRecentMessages(recentMessages);
     } catch (error) {
       console.warn('AI coach request failed', error);
-      const fallbackMessage = makeMessage('ai', 'I could not reach the coach model right now. Try again in a moment.', 'text');
+      const fallbackText =
+        error instanceof AIRequestError
+          ? error.message
+          : 'I could not reach the coach model right now. Try again in a moment.';
+      const fallbackMessage = makeMessage('ai', fallbackText, 'text');
       addMessage(fallbackMessage);
       await persistRecentMessages(useAICoachStore.getState().messages);
     } finally {
@@ -473,7 +480,7 @@ export default function AICoachScreen() {
             style={styles.backButton}>
             <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </TouchableOpacity>
-          <View>
+          <View style={styles.headerText}>
             <Text style={styles.title}>AI Coach</Text>
             <Text style={styles.lastInsight}>Last insight: 2 hours ago</Text>
           </View>
@@ -489,7 +496,9 @@ export default function AICoachScreen() {
           contentContainerStyle={styles.insightStrip}
           style={styles.insightScroll}>
           {insights.map((insight) => (
-            <View key={insight.id} style={[styles.insightCard, { backgroundColor: insight.background, borderColor: insight.accent }]}>
+            <View
+              key={insight.id}
+              style={[styles.insightCard, { width: insightCardWidth, backgroundColor: insight.background, borderColor: insight.accent }]}>
               <View style={styles.insightTop}>
                 <Ionicons name={insight.icon} size={17} color={insight.accent} />
                 <Text style={[styles.insightTitle, { color: insight.accent }]}>{insight.title}</Text>
@@ -518,7 +527,7 @@ export default function AICoachScreen() {
         />
 
         <View style={styles.composerWrap}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow} style={styles.chipScroll}>
             {CONTEXT_CHIPS.map((chip) => {
               const selected = selectedChips.includes(chip);
               return (
@@ -566,10 +575,16 @@ function createStyles(colors: ColorPalette) {
   return StyleSheet.create({
   safeArea: {
     flex: 1,
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
     backgroundColor: colors.background,
   },
   container: {
     flex: 1,
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
     backgroundColor: colors.background,
   },
   header: {
@@ -580,6 +595,10 @@ function createStyles(colors: ColorPalette) {
     paddingHorizontal: spacing.gutter,
     paddingTop: spacing.xs,
     paddingBottom: spacing.sm,
+  },
+  headerText: {
+    flex: 1,
+    minWidth: 0,
   },
   backButton: {
     alignItems: 'center',
@@ -602,6 +621,8 @@ function createStyles(colors: ColorPalette) {
   },
   modelBadge: {
     minHeight: 32,
+    maxWidth: '48%',
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -613,10 +634,13 @@ function createStyles(colors: ColorPalette) {
   },
   modelText: {
     ...typography.labelCaps,
+    flexShrink: 1,
     color: colors.violetLight,
   },
   insightScroll: {
     flexGrow: 0,
+    maxWidth: '100%',
+    overflow: 'hidden',
   },
   insightStrip: {
     gap: spacing.sm,
@@ -624,8 +648,8 @@ function createStyles(colors: ColorPalette) {
     paddingBottom: spacing.sm,
   },
   insightCard: {
-    width: 200,
     minHeight: 126,
+    flexShrink: 0,
     borderWidth: 1,
     borderRadius: 8,
     padding: spacing.sm,
@@ -741,6 +765,8 @@ function createStyles(colors: ColorPalette) {
     marginTop: spacing.xs,
   },
   composerWrap: {
+    maxWidth: '100%',
+    overflow: 'hidden',
     paddingTop: spacing.xs,
     paddingHorizontal: spacing.gutter,
     paddingBottom: Platform.OS === 'ios' ? spacing.sm : spacing.md,
@@ -751,6 +777,9 @@ function createStyles(colors: ColorPalette) {
   chipRow: {
     gap: spacing.xs,
     paddingBottom: spacing.xs,
+  },
+  chipScroll: {
+    maxWidth: '100%',
   },
   contextChip: {
     height: 34,
@@ -787,6 +816,7 @@ function createStyles(colors: ColorPalette) {
   input: {
     ...typography.body,
     flex: 1,
+    minWidth: 0,
     maxHeight: 108,
     minHeight: 36,
     paddingHorizontal: 8,

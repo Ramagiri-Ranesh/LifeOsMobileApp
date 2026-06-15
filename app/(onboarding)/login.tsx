@@ -5,7 +5,7 @@ import { Alert, Pressable, StatusBar, StyleSheet, Text, TextInput, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
-import { hashPassword, normalizeUsername } from '@/lib/password';
+import { loadProfileForAuthUser, migrateLegacyAccount, normalizeUsername, usernameToAuthEmailCandidates } from '@/lib/auth';
 import { profileFromRow } from '@/lib/profile';
 import { hydrateAccountSettings } from '@/lib/settingsService';
 import { supabase } from '@/lib/supabase';
@@ -44,26 +44,49 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      const { data: authData, error: authError } = await supabase.rpc('verify_app_login', {
-        input_username: normalizedUsername,
-        input_password_hash: hashPassword(normalizedUsername, password),
-      });
+      const emailCandidates = usernameToAuthEmailCandidates(normalizedUsername);
+      let authData = null;
+      let authError = null;
 
-      if (authError) throw authError;
-      const authRows = (authData ?? []) as LooseRow[];
-      const authUserId = String(authRows[0]?.profile_id ?? '');
+      for (const email of emailCandidates) {
+        const result = await supabase.auth.signInWithPassword({ email, password });
+        authData = result.data;
+        authError = result.error;
+        if (!authError) break;
+      }
+
+      if (authError) {
+        try {
+          const migration = await migrateLegacyAccount(normalizedUsername, password);
+          if (migration.migrated) {
+            const retry = await supabase.auth.signInWithPassword({ email: emailCandidates[0], password });
+            authData = retry.data;
+            authError = retry.error;
+          }
+        } catch (migrationError) {
+          console.warn('Unable to migrate legacy account during login', migrationError);
+        }
+      }
+
+      if (authError || !authData) {
+        showLoginError(
+          'Login failed',
+          'Username or password is incorrect. If this account was created before the secure login update, deploy the migration function once and try again.',
+        );
+        return;
+      }
+      const authUserId = authData.user?.id ?? '';
       if (!authUserId) {
         showLoginError('Login failed', 'Username or password is incorrect.');
         return;
       }
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authUserId)
-        .single();
-
-      if (error) throw error;
+      const data = await loadProfileForAuthUser(authUserId);
+      if (!data) {
+        showLoginError('Profile missing', 'This login exists, but no LifeOS profile is linked to it.');
+        await supabase.auth.signOut();
+        return;
+      }
       const row = data as LooseRow;
       const restored = profileFromRow(row);
       if (!restored.onboardingCompleted) {
@@ -74,7 +97,7 @@ export default function LoginScreen() {
 
       const userId = String(row.id ?? '');
       setSession({ userId, username: normalizedUsername });
-      setProfile({ ...restored.profile, id: userId, username: normalizedUsername });
+      setProfile({ ...restored.profile, id: userId, authUserId, username: normalizedUsername });
       setPlanTargets(restored.calorieGoal, restored.macros, restored.profile.waterTargetMl);
       if (restored.generatedPlan) setGeneratedPlan(restored.generatedPlan);
       setCurrentSplit(restored.generatedPlan?.workoutSplit ?? restored.profile.split);

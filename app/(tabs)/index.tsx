@@ -28,6 +28,7 @@ import { getDailyBrief } from '@/lib/ai';
 import { canRecalibrateBodyPlan, loadBodyMetrics, type BodyMetricLog } from '@/lib/bodyMetrics';
 import { domainsForColors, radii, spacing, typography, useLifeOSColors, type ColorPalette, type Domain } from '@/lib/design';
 import { calculateDailyLifeScore, persistDailyLifeScore } from '@/lib/lifeScore';
+import { hapticLight } from '@/lib/haptics';
 import { mealFallbackTime } from '@/lib/nutritionSchedule';
 import { cancelTaskNotification, countUnreadNotifications, scheduleTaskNotification } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
@@ -506,6 +507,7 @@ export default function DailyHubScreen() {
     if (next === waterCount) return;
 
     const previous = waterCount;
+    hapticLight();
     setWaterCount(next);
     setWaterMl(next * WATER_GLASS_ML);
 
@@ -687,6 +689,7 @@ export default function DailyHubScreen() {
       asText(task.id) === taskId ? { ...task, completed: nextCompleted } : task,
     );
 
+    hapticLight();
     setTasks(optimisticTasks);
 
     const { data, error } = await supabase

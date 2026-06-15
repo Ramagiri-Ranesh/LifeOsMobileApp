@@ -19,7 +19,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LifeOSCard } from '@/components/ui/LifeOSCard';
 import { exportSettingsBackup, scheduleLifeOSNotifications } from '@/lib/notifications';
 import { appModeOptions, colorsForAppMode, radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
+import { hapticLight } from '@/lib/haptics';
 import { syncCurrentSettings } from '@/lib/settingsService';
+import { supabase } from '@/lib/supabase';
 import { type AIModel, type AppMode, type NotificationType, useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
 
@@ -103,21 +105,25 @@ export default function SettingsScreen() {
   );
 
   const updateNotification = (type: NotificationType, enabled: boolean) => {
+    hapticLight();
     setNotificationEnabled(type, enabled);
     syncSettings();
   };
 
   const updateAIModel = (model: AIModel) => {
+    hapticLight();
     setAIModel(model);
     syncSettings();
   };
 
   const updateAppMode = (mode: AppMode) => {
+    hapticLight();
     setAppMode(mode);
     syncSettings();
   };
 
   const toggleAppLock = async (enabled: boolean) => {
+    hapticLight();
     if (!enabled) {
       setAppLockEnabled(false);
       return;
@@ -167,7 +173,8 @@ export default function SettingsScreen() {
     setBackupVisible(true);
   };
 
-  const performLogout = () => {
+  const performLogout = async () => {
+    await supabase.auth.signOut();
     resetAuth();
     router.replace('/(onboarding)/login');
   };
@@ -175,7 +182,7 @@ export default function SettingsScreen() {
   const logout = () => {
     if (Platform.OS === 'web') {
       if (window.confirm('Logout? You will need to login again to open your dashboard.')) {
-        performLogout();
+        void performLogout();
       }
       return;
     }
@@ -185,7 +192,9 @@ export default function SettingsScreen() {
       {
         text: 'Logout',
         style: 'destructive',
-        onPress: performLogout,
+        onPress: () => {
+          void performLogout();
+        },
       },
     ]);
   };

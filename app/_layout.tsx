@@ -13,8 +13,14 @@ import {
   registerNotificationReceivedHandler,
   registerNotificationResponseHandler,
 } from '@/lib/notifications';
+import { profileFromRow } from '@/lib/profile';
+import { hydrateAccountSettings } from '@/lib/settingsService';
+import { supabase } from '@/lib/supabase';
+import { loadProfileForAuthUser } from '@/lib/auth';
+import { useGymStore } from '@/stores/useGymStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useUserStore } from '@/stores/useUserStore';
+import type { Json } from '@/types/database';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -54,15 +60,112 @@ export default function RootLayout() {
 function RootLayoutNav() {
   const router = useRouter();
   const segments = useSegments();
-  const { currentUserId, hasRegisteredBefore, onboardingCompleted, profile } = useUserStore();
+  const {
+    currentUserId,
+    hasRegisteredBefore,
+    onboardingCompleted,
+    profile,
+    completeOnboarding,
+    resetAuth,
+    setGeneratedPlan,
+    setPlanTargets,
+    setProfile,
+    setSession,
+  } = useUserStore();
+  const setCurrentSplit = useGymStore((state) => state.setCurrentSplit);
   const appLockEnabled = useSettingsStore((state) => state.appLockEnabled);
   const appMode = useSettingsStore((state) => state.appMode);
   const systemMode = useColorScheme();
   const modeColors = colorsForAppMode(appMode, systemMode === 'light' ? 'light' : 'dark');
   const [unlocked, setUnlocked] = useState(!appLockEnabled);
-  const isReady = Boolean(currentUserId && profile && onboardingCompleted);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const profileMatchesAuth = Boolean(profile && authUserId && (profile.id === authUserId || profile.authUserId === authUserId));
+  const isReady = Boolean(authChecked && authUserId && currentUserId && profileMatchesAuth && profile && onboardingCompleted);
 
   useEffect(() => {
+    let mounted = true;
+
+    async function restoreProfile(authId: string) {
+      const data = await loadProfileForAuthUser(authId);
+      if (!data) throw new Error('No LifeOS profile is linked to the Supabase Auth user.');
+
+      const restored = profileFromRow(data as Record<string, Json | undefined>);
+      const username = restored.profile.username ?? '';
+      const profileId = restored.profile.id ?? authId;
+
+      setSession({ userId: profileId, username });
+      setProfile({ ...restored.profile, id: profileId, authUserId: authId, username });
+      setPlanTargets(restored.calorieGoal, restored.macros, restored.profile.waterTargetMl);
+      if (restored.generatedPlan) setGeneratedPlan(restored.generatedPlan);
+      setCurrentSplit(restored.generatedPlan?.workoutSplit ?? restored.profile.split);
+      await hydrateAccountSettings(profileId);
+      if (restored.onboardingCompleted) completeOnboarding();
+    }
+
+    async function reconcileAuth() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const sessionUserId = data.session?.user.id ?? null;
+        const routeGroup = segments[0];
+        const routeName = segments[1];
+        const isRegistering = routeGroup === '(onboarding)' && routeName === 'register' && !onboardingCompleted;
+
+        if (!mounted) return;
+        setAuthUserId(sessionUserId);
+
+        if (!sessionUserId) {
+          if (currentUserId || onboardingCompleted) resetAuth();
+          return;
+        }
+
+        if (isRegistering) return;
+
+        const sessionMatchesProfile = Boolean(
+          profile && (profile.id === sessionUserId || profile.authUserId === sessionUserId),
+        );
+
+        if (!sessionMatchesProfile || !onboardingCompleted) {
+          await restoreProfile(sessionUserId);
+        }
+      } catch (error) {
+        console.warn('Unable to restore Supabase auth session', error);
+        resetAuth();
+        setAuthUserId(null);
+      } finally {
+        if (mounted) setAuthChecked(true);
+      }
+    }
+
+    void reconcileAuth();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+      const sessionUserId = session?.user.id ?? null;
+      setAuthUserId(sessionUserId);
+      if (event === 'SIGNED_OUT' || !sessionUserId) resetAuth();
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [
+    completeOnboarding,
+    currentUserId,
+    onboardingCompleted,
+    profile,
+    resetAuth,
+    setCurrentSplit,
+    setGeneratedPlan,
+    setPlanTargets,
+    setProfile,
+    setSession,
+    segments,
+  ]);
+
+  useEffect(() => {
+    if (!authChecked) return;
     const routeGroup = segments[0];
 
     if (!isReady && routeGroup !== '(onboarding)') {
@@ -72,7 +175,7 @@ function RootLayoutNav() {
     if (isReady && routeGroup === '(onboarding)') {
       router.replace('/(tabs)');
     }
-  }, [isReady, router, segments]);
+  }, [authChecked, hasRegisteredBefore, isReady, router, segments]);
 
   useEffect(() => registerNotificationResponseHandler(router), [router]);
 
@@ -114,7 +217,9 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={lifeOSTheme}>
-      {!unlocked ? (
+      {!authChecked ? (
+        <View style={[styles.lockScreen, { backgroundColor: modeColors.background }]} />
+      ) : !unlocked ? (
         <View style={[styles.lockScreen, { backgroundColor: modeColors.background }]}>
           <Text style={[styles.lockTitle, { color: modeColors.textPrimary }]}>LifeOS locked</Text>
           <Text style={[styles.lockBody, { color: modeColors.textSecondary }]}>Authenticate to continue.</Text>

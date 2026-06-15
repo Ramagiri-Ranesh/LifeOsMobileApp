@@ -4,7 +4,7 @@
 
 This document translates `docs/prd.md` and the current repository into a technical architecture for upgrading LifeOS safely.
 
-LifeOS is currently a React Native + Expo Router app with Supabase persistence, Zustand local state, custom username/password login, editable profile management, OpenAI/Ollama AI integration, local notifications with a persisted inbox, background anomaly checks, and a partially complete Supabase schema surface.
+LifeOS is currently a React Native + Expo Router app with Supabase persistence, Zustand local state, Supabase Auth-backed username/password login, editable profile management, OpenAI/Ollama AI integration, local notifications with a persisted inbox, background anomaly checks, and a partially complete Supabase schema surface.
 
 This architecture has three jobs:
 
@@ -27,7 +27,7 @@ This architecture has three jobs:
 | Notifications | Expo Notifications |
 | Local security | Expo Local Authentication |
 | Charts/visuals | Victory Native, React Native SVG, Reanimated, Skia |
-| AI | OpenAI `gpt-4o-mini` when configured, local Ollama fallback when enabled |
+| AI | OpenAI `gpt-4o-mini` through Supabase Edge Function, local Ollama fallback when enabled |
 
 ### High-Level System
 
@@ -102,7 +102,7 @@ app/
     fitness-profile.tsx    Goal, experience, gym days, weight target
     diet-profile.tsx       Cuisines, foods, disliked foods, meal timing, AI toggle
     plan-reveal.tsx        TDEE/macros/water/workout plan generation
-    register.tsx           Profile and app_users persistence
+    register.tsx           Supabase Auth account and profile persistence
 
   (tabs)/
     _layout.tsx            Six-tab layout
@@ -322,7 +322,7 @@ sequenceDiagram
   User->>OnboardingScreens: register username/password
   OnboardingScreens->>Supabase: rpc app_username_exists
   OnboardingScreens->>Supabase: insert profiles
-  OnboardingScreens->>Supabase: insert app_users
+  OnboardingScreens->>Supabase: create Supabase Auth user
   OnboardingScreens->>Supabase: upsert water_log
   OnboardingScreens->>UserStore: set session and complete onboarding
 ```
@@ -393,7 +393,7 @@ This inventory includes all tables listed in `types/database.ts`, all tables cre
 | Table | Status | Owner | Purpose |
 | --- | --- | --- | --- |
 | `profiles` | Created | Self | User profile, onboarding, targets, generated plan |
-| `app_users` | Created | `profile_id` | Custom app login credentials |
+| `app_users` | Legacy artifact | `profile_id` | Locked by hardening migration; no longer used by app login |
 | `tasks` | Created | `user_id` | Daily tasks and generated workout tasks |
 | `notifications` | Created | `user_id` | In-app notification inbox, unread state, delivery metadata |
 | `food_items` | Missing creation migration | `user_id` nullable or required | Food database and custom foods |
@@ -465,16 +465,16 @@ Key columns from migrations/code:
 
 Relationships:
 
-- One `profiles` row has one `app_users` row.
+- One `profiles` row maps to one Supabase Auth user id.
 - One `profiles` row has many rows in all user-owned domain tables.
 
 Upgrade requirements:
 
 - Add `updated_at` trigger.
-- Choose whether `username` belongs in `profiles`, `app_users`, or both.
+- Keep visible username in `profiles.username`.
 - Do not store password data in `profiles`.
 
-### 8.2 `app_users`
+### 8.2 `app_users` Legacy Artifact
 
 Purpose:
 
@@ -495,7 +495,7 @@ Relationships:
 Functions:
 
 - `app_username_exists(input_username text) returns boolean`
-- `verify_app_login(input_username text, input_password_hash text) returns table(profile_id uuid)`
+- Legacy login RPC execute permissions are revoked by the hardening migration.
 
 Upgrade decision:
 
@@ -1089,7 +1089,7 @@ Upgrade requirements:
 
 ```mermaid
 erDiagram
-  profiles ||--|| app_users : "has login"
+  profiles ||--|| auth_users : "has auth identity"
   profiles ||--o{ tasks : owns
   profiles ||--o{ notifications : owns
   profiles ||--o{ water_log : owns
@@ -1119,38 +1119,17 @@ erDiagram
 
 ### Current State
 
-- Custom credentials are stored in `app_users`.
-- App session is local Zustand state.
-- Some RLS policies allow all anon/authenticated access.
-- Some code uses `currentUserId` from `useUserStore`.
-
-### Target Option A: Keep Custom Auth Short Term
-
-Use this only for local/single-user or prototype mode.
+- Supabase Auth backs username/password registration and login.
+- Usernames map to internal auth emails and are also stored in `profiles.username`.
+- `profiles.id` is created from `auth.users.id`.
+- User-owned tables are locked by migration `202606140012_production_auth_rls_hardening.sql` with `auth.uid()` owner policies.
+- Legacy `app_users` remains only as an old migration artifact and has no anonymous/authenticated table access after the hardening migration.
 
 Rules:
 
-- Every query must filter by `currentUserId`.
-- Every insert must set `user_id = currentUserId`.
-- RLS cannot truly enforce the local custom user without server-backed session claims.
-- Do not ship sensitive multi-user production data with broad anon policies.
-
-### Target Option B: Migrate To Supabase Auth
-
-Recommended for real multi-user deployment.
-
-Rules:
-
-- Use Supabase Auth for username/email/password or phone/email login.
-- Make `profiles.id = auth.users.id`, or add `profiles.auth_user_id`.
-- RLS policies use `auth.uid()`.
-- Remove or retire `app_users`.
-- Update `useUserStore.currentUserId` from Supabase auth session.
-
-Recommended decision:
-
-- Move to Supabase Auth before public release.
-- If speed matters first, finish schema and feature gaps with custom auth, then migrate auth before exposing real data.
+- Every query should continue filtering by `currentUserId` for performance and clarity.
+- Every insert must set `user_id = currentUserId` for owner-scoped tables.
+- RLS is the enforcement boundary; Zustand session state is only UI/session cache.
 
 ## 11. AI Architecture
 
@@ -1160,10 +1139,10 @@ File: `lib/ai.ts`
 
 Current behavior:
 
-- `getActiveAIModelLabel()` returns OpenAI if key exists, otherwise Ollama.
-- `callAI()` uses OpenAI only when `allowOpenAI` is set.
+- `getActiveAIModelLabel()` reflects the selected Settings provider.
+- `callAI()` invokes the `lifeos-ai` Edge Function by default for OpenAI mode.
 - `callAI()` uses Ollama only when `allowLocalAI` is set.
-- Calls without these options return empty string and rely on fallback UI.
+- Calls can opt out of OpenAI with `allowOpenAI: false`.
 
 ### Target Provider Adapter
 
@@ -1240,8 +1219,14 @@ Required current env vars:
 ```text
 EXPO_PUBLIC_SUPABASE_URL
 EXPO_PUBLIC_SUPABASE_ANON_KEY
-EXPO_PUBLIC_OPENAI_API_KEY    optional, current OpenAI path
-OPENAI_API_KEY                optional fallback, current OpenAI path
+EXPO_PUBLIC_LIFEOS_AI_ENABLED  true only after lifeos-ai is deployed/configured
+```
+
+Supabase Edge Function secrets:
+
+```text
+OPENAI_API_KEY                required for lifeos-ai OpenAI calls
+SUPABASE_SERVICE_ROLE_KEY     recommended for durable lifeos-ai rate limiting
 ```
 
 Potential future env vars:
@@ -1287,7 +1272,7 @@ Architecture rule:
 
 ```text
 profiles(username)
-app_users(username)
+profiles(username)
 tasks(user_id, date)
 water_log(user_id, date) unique
 meal_logs(user_id, date, meal_type) unique
@@ -1378,7 +1363,7 @@ Keep compatibility exports if needed to avoid one giant refactor.
 
 ### Integration Tests Needed
 
-- Register -> profile/app_users/water_log inserted.
+- Register -> Supabase Auth user/profile/water_log inserted.
 - Login -> profile restored.
 - Nutrition -> meal log and item creation.
 - Gym -> session, sets, body metric, task completion.

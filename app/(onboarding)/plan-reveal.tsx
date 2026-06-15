@@ -70,6 +70,7 @@ export default function PlanRevealScreen() {
   );
   const [plan, setPlan] = useState<WeekPlan>(fallbackPlan);
   const [aiStatus, setAiStatus] = useState('Calculating with AI...');
+  const [isAwaitingAIPlan, setIsAwaitingAIPlan] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const generatedPlanKey = useRef<string | null>(null);
   const checkScale = useSharedValue(0.4);
@@ -77,6 +78,7 @@ export default function PlanRevealScreen() {
   const planCacheKey = useMemo(
     () =>
       JSON.stringify({
+        aiPlanParserVersion: 2,
         draft,
         fallbackPlan,
       }),
@@ -103,11 +105,13 @@ export default function PlanRevealScreen() {
       const cachedPlan = planCache.get(planCacheKey);
       if (cachedPlan) {
         setPlan(cachedPlan);
+        setIsAwaitingAIPlan(false);
         setAiStatus(draft.aiCalcCalories ? 'AI plan restored from this session.' : 'Plan calculated without AI.');
         return;
       }
 
       setPlan(fallbackPlan);
+      setIsAwaitingAIPlan(false);
 
       if (!draft.aiCalcCalories) {
         planCache.set(planCacheKey, fallbackPlan);
@@ -116,6 +120,8 @@ export default function PlanRevealScreen() {
       }
 
       try {
+        setIsAwaitingAIPlan(true);
+        setAiStatus('Generating your AI plan...');
         const pendingPlan =
           planRequests.get(planCacheKey) ??
           requestGeneratedPlan(planCacheKey, {
@@ -126,14 +132,19 @@ export default function PlanRevealScreen() {
         const parsedPlan = await pendingPlan;
         if (isMounted && parsedPlan) {
           setPlan(parsedPlan);
+          setIsAwaitingAIPlan(false);
           planCache.set(planCacheKey, parsedPlan);
           setAiStatus('AI plan generated with OpenAI.');
         } else if (isMounted) {
+          setIsAwaitingAIPlan(false);
           setAiStatus('OpenAI is unavailable, so LifeOS used the safe fallback calculation.');
         }
       } catch (error) {
         console.warn('First-week plan generation unavailable.', error);
-        if (isMounted) setAiStatus('AI plan generation failed, so LifeOS used the safe fallback calculation.');
+        if (isMounted) {
+          setIsAwaitingAIPlan(false);
+          setAiStatus('AI plan generation failed, so LifeOS used the safe fallback calculation.');
+        }
       }
     };
 
@@ -167,7 +178,7 @@ export default function PlanRevealScreen() {
   };
 
   const handleFinish = () => {
-    if (isSaving) return;
+    if (isSaving || isAwaitingAIPlan) return;
 
     setIsSaving(true);
     const generatedPlan: GeneratedPlan = {
@@ -183,6 +194,7 @@ export default function PlanRevealScreen() {
     setGeneratedPlan(generatedPlan);
     router.push('/(onboarding)/register');
   };
+  const isAIPlaceholderVisible = draft.aiCalcCalories && isAwaitingAIPlan;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -202,12 +214,14 @@ export default function PlanRevealScreen() {
             <Text style={styles.cardKicker}>Calorie target</Text>
             <Ionicons name="flame-outline" color={colors.emeraldLight} size={20} />
           </View>
-          <Text style={styles.calorieNumber}>{plan.calorieTarget}</Text>
-          <Text style={styles.calorieUnit}>kcal per day</Text>
+          <Text style={[styles.calorieNumber, isAIPlaceholderVisible && styles.placeholderText]}>
+            {isAIPlaceholderVisible ? 'AI' : plan.calorieTarget}
+          </Text>
+          <Text style={styles.calorieUnit}>{isAIPlaceholderVisible ? 'calculating target' : 'kcal per day'}</Text>
           <View style={styles.macroRow}>
-            <MacroPill label="Protein" value={`${plan.macros.protein}g`} />
-            <MacroPill label="Carbs" value={`${plan.macros.carbs}g`} />
-            <MacroPill label="Fat" value={`${plan.macros.fat}g`} />
+            <MacroPill label="Protein" value={isAIPlaceholderVisible ? 'AI' : `${plan.macros.protein}g`} />
+            <MacroPill label="Carbs" value={isAIPlaceholderVisible ? 'AI' : `${plan.macros.carbs}g`} />
+            <MacroPill label="Fat" value={isAIPlaceholderVisible ? 'AI' : `${plan.macros.fat}g`} />
           </View>
         </RevealCard>
 
@@ -216,9 +230,11 @@ export default function PlanRevealScreen() {
             <Text style={styles.cardKicker}>Workout split</Text>
             <Ionicons name="barbell-outline" color={colors.amberLight} size={20} />
           </View>
-          <Text style={styles.splitTitle}>{plan.workoutSplit}</Text>
+          <Text style={[styles.splitTitle, isAIPlaceholderVisible && styles.placeholderText]}>
+            {isAIPlaceholderVisible ? 'Generating AI split...' : plan.workoutSplit}
+          </Text>
           <View style={styles.dayPillRow}>
-            {plan.dayPills.slice(0, 7).map((day, index) => (
+            {(isAIPlaceholderVisible ? ['AI', 'AI', 'AI', 'AI', 'AI', 'AI', 'AI'] : plan.dayPills.slice(0, 7)).map((day, index) => (
               <View key={`${day}-${index}`} style={styles.dayPill}>
                 <Text style={styles.dayPillText}>{day}</Text>
               </View>
@@ -231,7 +247,9 @@ export default function PlanRevealScreen() {
             <Text style={styles.cardKicker}>Water target</Text>
             <Ionicons name="water-outline" color={colors.emeraldLight} size={20} />
           </View>
-          <Text style={styles.splitTitle}>{plan.waterTargetMl} ml per day</Text>
+          <Text style={[styles.splitTitle, isAIPlaceholderVisible && styles.placeholderText]}>
+            {isAIPlaceholderVisible ? 'AI calculating water target...' : `${plan.waterTargetMl} ml per day`}
+          </Text>
         </RevealCard>
 
         <RevealCard index={3} accentColor={colors.violet} backgroundColor={colors.violetBg}>
@@ -240,10 +258,10 @@ export default function PlanRevealScreen() {
             <Ionicons name="sparkles-outline" color={colors.violetLight} size={20} />
           </View>
           <View style={styles.goalList}>
-            {plan.firstWeekGoals.slice(0, 4).map((goal) => (
-              <View key={goal} style={styles.goalRow}>
+            {(isAIPlaceholderVisible ? ['AI is generating your first-week goals...'] : plan.firstWeekGoals.slice(0, 4)).map((goal, index) => (
+              <View key={`${goal}-${index}`} style={styles.goalRow}>
                 <View style={styles.goalDot} />
-                <Text style={styles.goalText}>{goal}</Text>
+                <Text style={[styles.goalText, isAIPlaceholderVisible && styles.placeholderText]}>{goal}</Text>
               </View>
             ))}
           </View>
@@ -253,10 +271,10 @@ export default function PlanRevealScreen() {
       <View style={styles.footer}>
         <Pressable
           accessibilityRole="button"
-          disabled={isSaving}
+          disabled={isSaving || isAwaitingAIPlan}
           onPress={handleFinish}
-          style={[styles.primaryButton, isSaving && styles.primaryButtonDisabled]}>
-          <Text style={styles.primaryButtonText}>{isSaving ? 'Preparing...' : "Let's go →"}</Text>
+          style={[styles.primaryButton, (isSaving || isAwaitingAIPlan) && styles.primaryButtonDisabled]}>
+          <Text style={styles.primaryButtonText}>{isSaving ? 'Preparing...' : isAwaitingAIPlan ? 'Generating AI plan...' : "Let's go →"}</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -405,7 +423,8 @@ async function requestGeneratedPlan(
         'Generate a first-week fitness and nutrition onboarding plan.',
         'Return only JSON with keys calorieTarget, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills as 7 short labels, weeklyWorkouts, and firstWeekGoals as exactly 4 concise goals.',
         'weeklyWorkouts must be an array of 7 objects: dayIndex 0-6 where 0 is Monday, label, templateName, muscleGroups, isRestDay, and exercises. Each exercise needs name, muscleGroup, targetSets, reps, and optional weightKg.',
-        `Use these exact calculated nutrition targets: ${context.fallbackPlan.calorieTarget} kcal, protein ${context.fallbackPlan.macros.protein}g, carbs ${context.fallbackPlan.macros.carbs}g, fat ${context.fallbackPlan.macros.fat}g, water ${context.fallbackPlan.waterTargetMl}ml.`,
+        `Start from these calculated targets, then adjust if the profile calls for it: ${context.fallbackPlan.calorieTarget} kcal, protein ${context.fallbackPlan.macros.protein}g, carbs ${context.fallbackPlan.macros.carbs}g, fat ${context.fallbackPlan.macros.fat}g, water ${context.fallbackPlan.waterTargetMl}ml.`,
+        'calorieTarget, macros, and waterTargetMl must be realistic positive integers and should reflect the user goal.',
         `The workout plan must contain exactly ${context.draft.gymDaysPerWeek} gym days in 7 dayPills. Use rest, walk, mobility, or recovery labels for non-gym days.`,
         'Respect disliked foods and meal timing. Use metric units.',
       ].join(' '),
@@ -417,7 +436,7 @@ async function requestGeneratedPlan(
         onboardingProfile: context.draft,
         calculatedPlan: context.fallbackPlan,
       },
-      { allowOpenAI: true, responseFormat: 'json_object' },
+      { allowOpenAI: true, allowUnauthenticatedAI: true, responseFormat: 'json_object' },
     );
 
     if (!response.trim()) return null;
@@ -438,47 +457,138 @@ function parseWeekPlan(
   const jsonText = response.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
 
   try {
-    const parsed = JSON.parse(jsonText) as Partial<WeekPlan>;
-    const firstWeekGoalsSource = Array.isArray(parsed.firstWeekGoals)
-      ? parsed.firstWeekGoals
-      : Array.isArray((parsed as { bullets?: unknown }).bullets)
-        ? (parsed as { bullets: unknown[] }).bullets
-        : [];
-    const firstWeekGoals = firstWeekGoalsSource.filter(Boolean).map(String).slice(0, 4);
-    const dayPills = Array.isArray(parsed.dayPills)
-      ? parsed.dayPills.filter(Boolean).map(String).slice(0, 7)
-      : defaultDayPills;
+    const parsed = unwrapAIJson(JSON.parse(jsonText));
+    if (!isRecord(parsed)) return null;
+
+    const firstWeekGoals = parseTextList(
+      firstArray(parsed, ['firstWeekGoals', 'first_week_goals', 'weeklyGoals', 'weekly_goals', 'goals', 'bullets']),
+      ['goal', 'text', 'title', 'description'],
+    ).slice(0, 4);
+    const dayPills = parseTextList(firstArray(parsed, ['dayPills', 'day_pills', 'schedule', 'days'])).slice(0, 7);
     const validDayPills = dayPills.length === 7 && workoutDayCount(dayPills) === Math.round(gymDaysPerWeek);
-    const weeklyWorkouts = parseWeeklyWorkouts((parsed as Partial<WeekPlan>).weeklyWorkouts, validDayPills ? dayPills : fallback.dayPills);
+    const weeklyWorkouts = parseWeeklyWorkouts(
+      firstArray(parsed, ['weeklyWorkouts', 'weekly_workouts', 'workouts']),
+      validDayPills ? dayPills : fallback.dayPills,
+    );
+    const calorieTarget = parseRequiredBoundedNumber(parsed, ['calorieTarget', 'calorie_target', 'calories', 'calorieGoal', 'calorie_goal'], {
+      min: Math.max(1200, Math.round(fallback.calorieTarget * 0.65)),
+      max: Math.min(5000, Math.round(fallback.calorieTarget * 1.35)),
+    });
+    const macros = parseRequiredMacros(firstRecord(parsed, ['macros', 'macroTargets', 'macro_targets'], parsed));
+    const waterTargetMl = parseRequiredBoundedNumber(parsed, ['waterTargetMl', 'water_target_ml', 'dailyWaterMl', 'daily_water_ml', 'water'], {
+      min: 1500,
+      max: 6000,
+      step: 50,
+    });
+    if (!calorieTarget || !macros || !waterTargetMl || firstWeekGoals.length === 0) return null;
 
     return {
-      workoutSplit: validDayPills && parsed.workoutSplit ? String(parsed.workoutSplit) : fallback.workoutSplit,
+      workoutSplit: validDayPills ? firstText(parsed, ['workoutSplit', 'workout_split', 'split'], fallback.workoutSplit) : fallback.workoutSplit,
       dayPills: validDayPills ? dayPills : fallback.dayPills,
       weeklyWorkouts,
-      firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
-      calorieTarget: fallback.calorieTarget,
-      macros: fallback.macros,
-      waterTargetMl: fallback.waterTargetMl,
+      firstWeekGoals,
+      calorieTarget,
+      macros,
+      waterTargetMl,
     };
   } catch {
-    const firstWeekGoals = response
-      .split('\n')
-      .map((line) => line.replace(/^[-*0-9. ]+/, '').trim())
-      .filter(Boolean)
-      .slice(0, 4);
-
-    if (firstWeekGoals.length === 0) return null;
-
-    return {
-      workoutSplit: fallback.workoutSplit,
-      dayPills: fallback.dayPills,
-      weeklyWorkouts: fallback.weeklyWorkouts,
-      firstWeekGoals: firstWeekGoals.length === 4 ? firstWeekGoals : defaultBullets,
-      calorieTarget: fallback.calorieTarget,
-      macros: fallback.macros,
-      waterTargetMl: fallback.waterTargetMl,
-    };
+    return null;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function unwrapAIJson(value: unknown): unknown {
+  if (typeof value === 'string') {
+    try {
+      return unwrapAIJson(JSON.parse(value));
+    } catch {
+      return value;
+    }
+  }
+
+  if (isRecord(value) && typeof value.text === 'string') {
+    return unwrapAIJson(value.text);
+  }
+
+  return value;
+}
+
+function firstArray(row: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function firstRecord(row: Record<string, unknown>, keys: string[], fallback: Record<string, unknown> = {}) {
+  for (const key of keys) {
+    const value = row[key];
+    if (isRecord(value)) return value;
+  }
+  return fallback;
+}
+
+function firstText(row: Record<string, unknown>, keys: string[], fallback: string) {
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return fallback;
+}
+
+function parseTextList(value: unknown[], objectKeys: string[] = []) {
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (isRecord(item)) return firstText(item, objectKeys, '').trim();
+      return '';
+    })
+    .filter(Boolean);
+}
+
+function parseBoundedNumber(
+  row: Record<string, unknown>,
+  keys: string[],
+  fallback: number,
+  bounds: { min: number; max: number; step?: number },
+) {
+  return parseRequiredBoundedNumber(row, keys, bounds) ?? fallback;
+}
+
+function parseRequiredBoundedNumber(
+  row: Record<string, unknown>,
+  keys: string[],
+  bounds: { min: number; max: number; step?: number },
+) {
+  for (const key of keys) {
+    const value = row[key];
+    const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[^\d.]/g, '')) : NaN;
+    if (Number.isFinite(parsed) && parsed >= bounds.min && parsed <= bounds.max) {
+      const rounded = Math.round(parsed);
+      return bounds.step ? Math.round(rounded / bounds.step) * bounds.step : rounded;
+    }
+  }
+  return null;
+}
+
+function parseMacros(row: Record<string, unknown>, fallback: WeekPlan['macros']) {
+  return {
+    protein: parseBoundedNumber(row, ['protein', 'proteinG', 'protein_g'], fallback.protein, { min: 40, max: 350 }),
+    carbs: parseBoundedNumber(row, ['carbs', 'carb', 'carbsG', 'carbs_g'], fallback.carbs, { min: 40, max: 700 }),
+    fat: parseBoundedNumber(row, ['fat', 'fatG', 'fat_g'], fallback.fat, { min: 20, max: 250 }),
+  };
+}
+
+function parseRequiredMacros(row: Record<string, unknown>) {
+  const protein = parseRequiredBoundedNumber(row, ['protein', 'proteinG', 'protein_g'], { min: 40, max: 350 });
+  const carbs = parseRequiredBoundedNumber(row, ['carbs', 'carb', 'carbsG', 'carbs_g'], { min: 40, max: 700 });
+  const fat = parseRequiredBoundedNumber(row, ['fat', 'fatG', 'fat_g'], { min: 20, max: 250 });
+
+  return protein && carbs && fat ? { protein, carbs, fat } : null;
 }
 
 function parseWeeklyWorkouts(value: unknown, dayPills: string[]): NonNullable<GeneratedPlan['weeklyWorkouts']> {
@@ -615,6 +725,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     marginTop: -spacing.sm,
     textAlign: 'center',
+  },
+  placeholderText: {
+    color: colors.textSecondary,
   },
   revealCard: {
     borderColor: colors.border,
