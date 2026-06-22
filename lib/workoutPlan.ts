@@ -1,4 +1,5 @@
 import type { GeneratedPlan, UserProfile } from '@/stores/useUserStore';
+import { exercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
 
 export type PlannedWorkoutExercise = {
   id: string;
@@ -73,54 +74,22 @@ function fallbackDayPills(gymDaysPerWeek = 4) {
 }
 
 function fallbackExercises(label: string): Array<Omit<PlannedWorkoutExercise, 'id' | 'lastWeekKg' | 'previousWeightKg'>> {
-  const key = label.toLowerCase();
-  if (isRestWorkoutLabel(label)) return [];
-  if (key.includes('push')) {
-    return [
-      { name: 'Bench Press', muscleGroup: 'chest', targetSets: 4, previousReps: 8 },
-      { name: 'Incline Press', muscleGroup: 'chest', targetSets: 3, previousReps: 10 },
-      { name: 'Shoulder Press', muscleGroup: 'shoulders', targetSets: 3, previousReps: 8 },
-      { name: 'Triceps Pushdown', muscleGroup: 'triceps', targetSets: 3, previousReps: 12 },
-    ];
-  }
-  if (key.includes('pull')) {
-    return [
-      { name: 'Lat Pulldown', muscleGroup: 'back', targetSets: 4, previousReps: 10 },
-      { name: 'Row', muscleGroup: 'back', targetSets: 3, previousReps: 8 },
-      { name: 'Face Pull', muscleGroup: 'shoulders', targetSets: 3, previousReps: 12 },
-      { name: 'Biceps Curl', muscleGroup: 'biceps', targetSets: 3, previousReps: 12 },
-    ];
-  }
-  if (key.includes('leg') || key.includes('lower')) {
-    return [
-      { name: 'Squat', muscleGroup: 'quads', targetSets: 4, previousReps: 6 },
-      { name: 'Romanian Deadlift', muscleGroup: 'hamstrings', targetSets: 3, previousReps: 8 },
-      { name: 'Leg Press', muscleGroup: 'quads', targetSets: 3, previousReps: 10 },
-      { name: 'Calf Raise', muscleGroup: 'calves', targetSets: 4, previousReps: 14 },
-    ];
-  }
-  if (key.includes('upper')) {
-    return [
-      { name: 'Bench Press', muscleGroup: 'chest', targetSets: 3, previousReps: 8 },
-      { name: 'Row', muscleGroup: 'back', targetSets: 3, previousReps: 8 },
-      { name: 'Shoulder Press', muscleGroup: 'shoulders', targetSets: 3, previousReps: 10 },
-      { name: 'Biceps Curl', muscleGroup: 'biceps', targetSets: 2, previousReps: 12 },
-      { name: 'Triceps Pushdown', muscleGroup: 'triceps', targetSets: 2, previousReps: 12 },
-    ];
-  }
-  return [
-    { name: 'Squat', muscleGroup: 'quads', targetSets: 3, previousReps: 6 },
-    { name: 'Bench Press', muscleGroup: 'chest', targetSets: 3, previousReps: 8 },
-    { name: 'Row', muscleGroup: 'back', targetSets: 3, previousReps: 8 },
-    { name: 'Plank', muscleGroup: 'core', targetSets: 3, previousReps: 45 },
-  ];
+  return exercisesForWorkoutLabel(label).map((item) => ({
+    name: item.name,
+    muscleGroup: item.muscleGroup,
+    targetSets: item.targetSets,
+    previousReps: item.reps,
+  }));
 }
 
 function plannedExercises(
   label: string,
   exercises?: NonNullable<GeneratedPlan['weeklyWorkouts']>[number]['exercises'],
 ) {
-  const source = exercises && exercises.length > 0
+  const catalogExercises = fallbackExercises(label);
+  const source = catalogExercises.length > 0
+    ? catalogExercises.map((exercise) => ({ ...exercise, weightKg: 0 }))
+    : exercises && exercises.length > 0
     ? exercises.map((exercise) => ({
         name: exercise.name,
         muscleGroup: exercise.muscleGroup || normalizeMuscleName(exercise.name),
@@ -128,7 +97,7 @@ function plannedExercises(
         previousReps: exercise.reps || 8,
         weightKg: exercise.weightKg || 0,
       }))
-    : fallbackExercises(label).map((exercise) => ({ ...exercise, weightKg: 0 }));
+    : [];
 
   return source.map((exercise, index) => ({
     id: `${slug(label)}-${slug(exercise.name)}-${index}`,

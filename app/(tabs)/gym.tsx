@@ -29,6 +29,7 @@ import Svg, { Circle, Ellipse, Path, Rect } from 'react-native-svg';
 import { BodyProgressModal } from '@/components/body/BodyProgressModal';
 import { saveBodyMetric } from '@/lib/bodyMetrics';
 import { colors as fallbackColors, radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
+import { EXERCISE_CATALOG } from '@/lib/exerciseCatalog';
 import { hapticLight, hapticSuccess } from '@/lib/haptics';
 import { supabase } from '@/lib/supabase';
 import { completeTodayWorkoutTask } from '@/lib/workoutTasks';
@@ -94,19 +95,13 @@ function useGymTheme() {
   return useContext(GymThemeContext);
 }
 
-const EXERCISE_LIBRARY: Array<{ name: string; muscleGroup: MuscleGroup; defaultWeight: number; defaultReps: number }> = [
-  { name: 'Barbell Bench Press', muscleGroup: 'chest', defaultWeight: 70, defaultReps: 8 },
-  { name: 'Incline Dumbbell Press', muscleGroup: 'chest', defaultWeight: 26, defaultReps: 10 },
-  { name: 'Seated Shoulder Press', muscleGroup: 'shoulders', defaultWeight: 42, defaultReps: 8 },
-  { name: 'Cable Triceps Pushdown', muscleGroup: 'triceps', defaultWeight: 32, defaultReps: 12 },
-  { name: 'Lat Pulldown', muscleGroup: 'back', defaultWeight: 58, defaultReps: 10 },
-  { name: 'Barbell Row', muscleGroup: 'back', defaultWeight: 62, defaultReps: 8 },
-  { name: 'Dumbbell Curl', muscleGroup: 'biceps', defaultWeight: 16, defaultReps: 12 },
-  { name: 'Back Squat', muscleGroup: 'quads', defaultWeight: 95, defaultReps: 6 },
-  { name: 'Romanian Deadlift', muscleGroup: 'hamstrings', defaultWeight: 82, defaultReps: 8 },
-  { name: 'Standing Calf Raise', muscleGroup: 'calves', defaultWeight: 64, defaultReps: 14 },
-  { name: 'Plank', muscleGroup: 'core', defaultWeight: 0, defaultReps: 45 },
-];
+const EXERCISE_LIBRARY: Array<{ name: string; muscleGroup: MuscleGroup; defaultWeight: number; defaultReps: number }> =
+  EXERCISE_CATALOG.map((item) => ({
+    name: item.name,
+    muscleGroup: item.muscleGroup,
+    defaultWeight: 0,
+    defaultReps: item.reps,
+  }));
 
 function cloneTemplate(template: WorkoutTemplate): Exercise[] {
   return template.exercises.map((exercise) => ({ ...exercise, sets: [] }));
@@ -196,7 +191,6 @@ export default function GymScreen() {
   const profile = useUserStore((state) => state.profile);
   const currentUserId = useUserStore((state) => state.currentUserId);
   const generatedPlan = useUserStore((state) => state.generatedPlan);
-  const setProfile = useUserStore((state) => state.setProfile);
   const workoutTemplates = useMemo(
     () => buildWorkoutTemplates(generatedPlan, profile).map(templateFromPlan),
     [generatedPlan, profile],
@@ -556,7 +550,6 @@ export default function GymScreen() {
       const weight = Number(bodyWeight);
       if (Number.isFinite(weight) && weight > 0) {
         await saveBodyMetric({ userId: currentUserId, date: completedAt.toISOString().slice(0, 10), weightKg: weight });
-        if (profile) setProfile({ ...profile, weightKg: weight });
       }
       await completeTodayWorkoutTask(template, currentUserId);
       setWorkoutCompleted(true);
@@ -576,7 +569,7 @@ export default function GymScreen() {
       setSavingWorkout(false);
       Alert.alert('Workout complete', 'Saved locally for this session. Check Supabase columns if persistence failed.');
     }
-  }, [bodyWeight, currentUserId, exercises, hasTodayWorkout, newPrs, profile, savingWorkout, setProfile, setTotals.done, startedAt, stopTimer, template, volume, workoutCompleted]);
+  }, [bodyWeight, currentUserId, exercises, hasTodayWorkout, newPrs, profile, savingWorkout, setTotals.done, startedAt, stopTimer, template, volume, workoutCompleted]);
 
   const renderExercise = ({ item }: { item: Exercise }) => {
     const status = statusFor(item);

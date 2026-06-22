@@ -58,4 +58,23 @@ describe('workout plan', () => {
     expect(today.name).toBe('Rest Day');
     expect(today.isRestDay).toBe(true);
   });
+
+  it('uses the requested full Push and Pull exercise catalogues', () => {
+    const plan: GeneratedPlan = {
+      workoutSplit: 'Push Pull Legs',
+      dayPills: ['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Rest', 'Recovery'],
+      firstWeekGoals: [],
+      waterTargetMl: 2250,
+    };
+    const templates = buildWorkoutTemplates(plan, profile);
+    expect(templates[0].exercises).toHaveLength(15);
+    expect(templates[0].exercises.map((item) => item.name)).toContain('Close-Grip Bench Press');
+    expect(templates[1].exercises).toHaveLength(15);
+    expect(templates[1].exercises.map((item) => item.name)).toEqual(expect.arrayContaining([
+      'Assisted Pull-Up', 'Chest Supported Row', 'Rear Delt Fly Machine', 'Hammer Curl',
+    ]));
+    expect(templates[2].exercises).toHaveLength(15);
+    expect(templates[3].exercises).toHaveLength(15);
+    expect(templates[4].exercises).toHaveLength(15);
+  });
 });

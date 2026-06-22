@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AIRequestError, callAI, getActiveAIModelLabel, getPatternInsight } from '@/lib/ai';
+import { AIRequestError, callAI, getActiveAIModelLabel } from '@/lib/ai';
 import { colors as fallbackColors, shadows, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
 import { useAICoachStore, type CoachMessage, type CoachMessageType } from '@/stores/useAICoachStore';
@@ -283,6 +283,11 @@ function buildStreakWin(gymStreak: number) {
   return 'Fresh training window today. One focused session is enough to start the next run.';
 }
 
+function isToday(isoDate: string) {
+  const date = new Date(isoDate);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
+}
+
 export default function AICoachScreen() {
   const router = useRouter();
   const { width } = useWindowDimensions();
@@ -334,6 +339,11 @@ export default function AICoachScreen() {
     [activeSession, currentSplit, todaysMeals, weeklyGoals],
   );
   const insightCardWidth = Math.min(200, Math.max(156, Math.floor((width - spacing.gutter * 2 - spacing.sm) / 2)));
+  const dailyCoachQuestions = useMemo(
+    () => messages.filter((message) => message.role === 'user' && isToday(message.createdAt)).length,
+    [messages],
+  );
+  const dailyLimitReached = dailyCoachQuestions >= 2;
 
   useEffect(() => {
     loadPersistedMessages();
@@ -346,13 +356,7 @@ export default function AICoachScreen() {
       const nextContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, gymStreak, currentUserId);
       if (cancelled) return;
 
-      let pattern = "You're 40% more focused on gym days. Keep workouts near high-focus tasks.";
-      try {
-        const response = await getPatternInsight();
-        if (response.trim().length > 0) pattern = response.trim();
-      } catch (error) {
-        console.warn('Unable to load pattern insight', error);
-      }
+      const pattern = "You're 40% more focused on gym days. Keep workouts near high-focus tasks.";
 
       if (!cancelled) {
         setInsights([
@@ -406,7 +410,7 @@ export default function AICoachScreen() {
 
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || isProcessing) return;
+    if (!trimmed || isProcessing || dailyLimitReached) return;
 
     const chipContext = formatChipContext(selectedChips, chipSummaries);
     const userMessage = makeMessage('user', trimmed);
@@ -426,7 +430,7 @@ export default function AICoachScreen() {
         recentLifeScores: freshContext.recentLifeScores,
         selectedChips,
         selectedChipContext: chipContext,
-      });
+      }, { purpose: 'coach', allowOpenAI: true, allowLocalAI: false });
       const responseText = response.trim() || 'I am here, but I could not generate a useful response this time.';
       const aiMessage = makeMessage('ai', '', inferMessageType(responseText));
       addMessage(aiMessage);
@@ -482,7 +486,7 @@ export default function AICoachScreen() {
           </TouchableOpacity>
           <View style={styles.headerText}>
             <Text style={styles.title}>AI Coach</Text>
-            <Text style={styles.lastInsight}>Last insight: 2 hours ago</Text>
+            <Text style={styles.lastInsight}>{Math.min(dailyCoachQuestions, 2)} of 2 questions used today</Text>
           </View>
           <View style={styles.modelBadge}>
             <Ionicons name="hardware-chip-outline" size={14} color={colors.violetLight} />
@@ -546,7 +550,7 @@ export default function AICoachScreen() {
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="Ask anything..."
+              placeholder={dailyLimitReached ? 'Daily limit reached' : 'Ask anything...'}
               placeholderTextColor={colors.textMuted}
               style={styles.input}
               multiline
@@ -556,9 +560,9 @@ export default function AICoachScreen() {
               <Ionicons name="mic-outline" size={20} color={colors.textSecondary} />
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.sendButton, (!input.trim() || isProcessing) && styles.sendButtonDisabled]}
+              style={[styles.sendButton, (!input.trim() || isProcessing || dailyLimitReached) && styles.sendButtonDisabled]}
               activeOpacity={0.85}
-              disabled={!input.trim() || isProcessing}
+              disabled={!input.trim() || isProcessing || dailyLimitReached}
               onPress={handleSend}
               accessibilityLabel="Send message">
               <Ionicons name="arrow-up" size={20} color={colors.textPrimary} />

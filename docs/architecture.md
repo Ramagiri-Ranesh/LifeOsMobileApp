@@ -4,13 +4,41 @@
 
 This document translates `docs/prd.md` and the current repository into a technical architecture for upgrading LifeOS safely.
 
-LifeOS is currently a React Native + Expo Router app with Supabase persistence, Zustand local state, Supabase Auth-backed username/password login, editable profile management, OpenAI/Ollama AI integration, local notifications with a persisted inbox, background anomaly checks, and a partially complete Supabase schema surface.
+LifeOS is currently a React Native + Expo Router app with Supabase persistence, Zustand local state, Supabase Auth-backed username/password login, editable profile management, narrowly scoped OpenAI integration, local notifications with a persisted inbox, background anomaly checks, and a partially complete Supabase schema surface.
 
 This architecture has three jobs:
 
 - Show how the project is structured today.
 - Define the target technical shape for a clean upgrade.
 - Document every Supabase table, relationship, and missing migration needed to make the app reliable from a clean database.
+
+### Implemented correction architecture (June 22, 2026)
+
+The nutrition/fitness target pipeline now has deterministic domain boundaries:
+
+```text
+onboarding target weight + 0-1 kg/week pace
+  -> calculations.calculateGoalCalorieTarget (maintenance + signed pace delta)
+  -> deterministic first-week plan
+  -> registration + profile + generatedPlan + waterTargetMl
+
+body_metrics weight log
+  -> no profile mutation
+  -> after 14-day cooldown, explicit Generate AI targets action
+  -> lifeos-ai purpose=body_recalibration
+  -> profile weight + calories + macros + water + workout targets updated together
+
+food_items row
+  -> nutritionFood.resolveServingNutrition
+  -> serving macros (direct columns, or scaled *_per_100g fallback)
+
+day label
+  -> exerciseCatalog.exercisesForWorkoutLabel
+  -> workoutPlan
+  -> Gym UI / workout task
+```
+
+The deterministic calculation/catalogue layer is authoritative during onboarding and everywhere outside the two approved AI entry points. AI can provide a bounded recalibration estimate only after registration and an explicit eligible button press; the app applies the selected surplus/deficit, derives 250 ml glasses, and prevents AI from replacing the approved exercise catalogue.
 
 ## 2. Current Architecture Summary
 
@@ -27,7 +55,7 @@ This architecture has three jobs:
 | Notifications | Expo Notifications |
 | Local security | Expo Local Authentication |
 | Charts/visuals | Victory Native, React Native SVG, Reanimated, Skia |
-| AI | OpenAI `gpt-4o-mini` through Supabase Edge Function, local Ollama fallback when enabled |
+| AI | OpenAI `gpt-4o-mini` through Supabase Edge Function for coach and biweekly recalibration only |
 
 ### High-Level System
 
@@ -38,7 +66,7 @@ flowchart TD
   App --> Lib[Domain Libraries]
   Lib --> SupabaseClient[Supabase Client]
   SupabaseClient --> DB[(Supabase Postgres)]
-  Lib --> AI[AI Provider: OpenAI/Ollama current]
+  Lib --> AI[lifeos-ai: coach or body_recalibration only]
   Lib --> Notifications[Expo Notifications]
   Notifications --> Background[Expo Background Task]
   Background --> EdgeFn[lifeos-anomaly-alerts Edge Function]
@@ -162,6 +190,8 @@ Domain and infrastructure utilities.
 lib/
   ai.ts               AI provider adapter and prompt helpers
   calculations.ts     TDEE, macros, Life Score, streak helpers
+  exerciseCatalog.ts  Approved Push/Pull/Legs/Upper/Lower exercise catalogues
+  nutritionFood.ts    Pure serving/per-100g nutrition normalization
   cloneYesterday.ts   Meal clone workflow
   design.ts           Design tokens
   notifications.ts    Expo notification scheduling and background task registration
@@ -221,6 +251,7 @@ supabase/
     202606130006_dedupe_workout_tasks.sql
     202606130007_workout_history_access.sql
     202606140004_notifications_profile_inbox.sql
+    202606220001_profile_target_date.sql
   functions/
     lifeos-anomaly-alerts/
       index.ts
@@ -311,17 +342,18 @@ sequenceDiagram
   participant User
   participant OnboardingScreens
   participant UserStore
-  participant AI
   participant Supabase
 
   User->>OnboardingScreens: enter basic, fitness, diet data
+  OnboardingScreens->>UserStore: store target weight and 0-1 kg/week pace
+  OnboardingScreens->>OnboardingScreens: derive target date and signed calorie adjustment
   OnboardingScreens->>UserStore: update onboardingProfile
-  OnboardingScreens->>AI: optional first-week plan request
-  AI-->>OnboardingScreens: JSON plan or empty/error
+  OnboardingScreens->>OnboardingScreens: build deterministic first-week plan
   OnboardingScreens->>UserStore: set profile, targets, generatedPlan
   User->>OnboardingScreens: register username/password
   OnboardingScreens->>Supabase: rpc app_username_exists
   OnboardingScreens->>Supabase: insert profiles
+  Note over OnboardingScreens,Supabase: starting plan anchors the first 14-day AI cooldown
   OnboardingScreens->>Supabase: create Supabase Auth user
   OnboardingScreens->>Supabase: upsert water_log
   OnboardingScreens->>UserStore: set session and complete onboarding
@@ -340,7 +372,7 @@ flowchart TD
   DailyHub --> WorkoutPlan[workoutPlan]
   WorkoutPlan --> WorkoutTasks[workoutTasks]
   WorkoutTasks --> Tasks
-  DailyHub --> AI[Daily brief]
+  DailyHub --> LocalBrief[Deterministic daily brief]
 ```
 
 ### Nutrition
@@ -353,11 +385,17 @@ flowchart TD
   NutritionStore --> MealLogItems[(meal_log_items)]
   NutritionStore --> MealTemplates[(meal_templates)]
   MealTemplates --> MealTemplateItems[(meal_template_items)]
-  NutritionScreen -. paused .-> AI[Meal suggestion]
   NutritionScreen --> CloneYesterday[cloneYesterday]
   CloneYesterday --> MealLogs
   CloneYesterday --> MealLogItems
 ```
+
+Food normalization rule:
+
+1. Accept PostgREST numeric values as numbers or numeric strings.
+2. Use populated per-serving calories/macros first.
+3. If a legacy serving macro is zero while its `*_per_100g` value is populated, scale it by `serving calories / calories_per_100g`.
+4. Meal-item snapshots are authoritative for a meal with items; cached meal totals are used only when no item rows exist.
 
 ### Gym
 
@@ -434,6 +472,8 @@ Key columns from migrations/code:
 - `height_cm integer`
 - `weight_kg numeric`
 - `target_weight_kg numeric`
+- `target_date date`
+- `weekly_weight_change_kg numeric default 0.5 check (weekly_weight_change_kg between 0 and 1)`
 - `gym_days_per_week integer`
 - `split text`
 - `workout_split text`
@@ -457,6 +497,13 @@ Key columns from migrations/code:
 - `macros jsonb default '{}'`
 - `daily_water_goal_ml integer`
 - `water_target_ml integer`
+
+Target semantics:
+
+- `calorie_goal` is the actionable goal target, not maintenance TDEE.
+- `weekly_weight_change_kg` is the user-selected magnitude. Goal/target direction signs the value, and the client applies `kg/week × 7,700 / 7` to bounded maintenance calories.
+- `target_date` is derived from weight difference and weekly pace; it is empty at maintenance pace.
+- AI hydration is accepted as millilitres only. The fallback uses `max(2200, weightKg × 35)`, and either source is rounded up to full 250 ml glasses before persistence.
 - `first_week_plan jsonb default '{}'`
 - `onboarding_profile jsonb default '{}'`
 - `onboarding_completed boolean default false`
@@ -1140,9 +1187,27 @@ File: `lib/ai.ts`
 Current behavior:
 
 - `getActiveAIModelLabel()` reflects the selected Settings provider.
-- `callAI()` invokes the `lifeos-ai` Edge Function by default for OpenAI mode.
-- `callAI()` uses Ollama only when `allowLocalAI` is set.
-- Calls can opt out of OpenAI with `allowOpenAI: false`.
+- `callAI()` requires purpose `coach` or `body_recalibration`; there is no general-purpose call path.
+- The client requires an authenticated session, and the Edge Function verifies authentication plus `profiles.onboarding_completed = true`.
+- `coach` uses a user/day-specific durable rate-limit key and permits two requests per UTC day.
+- `body_recalibration` checks `profiles.last_body_recalibration_at` and permits generation only after 14 days.
+- A missing or invalid recalibration response does not update the profile or consume the client-side cooldown.
+- Approved production calls set `allowLocalAI: false`, so Ollama cannot bypass backend authorization or quotas.
+- Onboarding, Daily Hub, Nutrition, Goals, static insight cards, notifications, and background jobs do not invoke AI.
+
+### Approved AI flows
+
+```mermaid
+flowchart TD
+  User[Registered user] --> Coach[AI Coach question]
+  Coach --> CoachLimit[2 per UTC day]
+  CoachLimit --> Edge[lifeos-ai]
+  User --> WeightLog[Log weight to body_metrics]
+  WeightLog --> Cooldown[Wait until 14-day button unlock]
+  Cooldown --> Generate[Generate AI targets]
+  Generate --> Edge
+  Edge --> ProfileUpdate[Update profile weight and plan targets together]
+```
 
 ### Target Provider Adapter
 
@@ -1152,6 +1217,7 @@ Create explicit provider interface:
 type AIProvider = 'openai' | 'ollama' | 'gemini';
 
 type AIRequest = {
+  purpose: 'coach' | 'body_recalibration';
   prompt: string;
   context?: Record<string, unknown>;
   responseFormat?: 'text' | 'json';
@@ -1441,6 +1507,13 @@ Rationale:
 ## 18. Implementation Readiness Checklist
 
 Before feature expansion:
+
+- [x] AI blocked before completed registration/authentication.
+- [x] Automatic onboarding, Daily Hub, Nutrition, Goals, insight, notification, and background AI calls removed.
+- [x] Weight logs no longer update profile weight immediately.
+- [x] Biweekly Generate AI targets flow updates profile weight and nutrition/training targets together.
+- [x] AI Coach UI and Edge Function enforce two questions per UTC day.
+- [x] AI requests carry an explicit allowlisted purpose.
 
 - [ ] Clean database can run all migrations.
 - [ ] `types/database.ts` generated from real schema.

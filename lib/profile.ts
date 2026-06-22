@@ -1,5 +1,6 @@
 import type { GeneratedPlan, OnboardingProfile, UserProfile } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
+import { calculateHydrationTarget, normalizeWaterTargetMl } from '@/lib/calculations';
 
 type LooseRow = Record<string, Json | undefined>;
 
@@ -8,11 +9,19 @@ function asText(value: Json | undefined, fallback = '') {
 }
 
 function asNumber(value: Json | undefined, fallback = 0) {
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function asStringArray(value: Json | undefined) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function asWaterTargetMl(value: Json | undefined, fallback: number) {
+  return normalizeWaterTargetMl(value, null, fallback) ?? fallback;
 }
 
 function asGender(value: Json | undefined): UserProfile['gender'] {
@@ -89,6 +98,8 @@ export function buildProfilePayload(args: {
     height_cm: args.profile.heightCm,
     weight_kg: args.profile.weightKg,
     target_weight_kg: args.profile.targetWeightKg,
+    target_date: args.profile.targetDate || args.draft.targetDate || null,
+    weekly_weight_change_kg: args.profile.weeklyWeightChangeKg ?? args.draft.weeklyWeightChangeKg,
     gym_days_per_week: args.profile.gymDaysPerWeek,
     split: args.profile.split,
     workout_split: args.profile.split,
@@ -115,6 +126,7 @@ export function buildProfilePayload(args: {
     first_week_plan: firstWeekPlan,
     onboarding_profile: onboardingProfile,
     onboarding_completed: true,
+    last_body_recalibration_at: new Date().toISOString(),
   };
 }
 
@@ -129,7 +141,11 @@ export function profileFromRow(row: LooseRow): {
   const planRow = row.first_week_plan && typeof row.first_week_plan === 'object' && !Array.isArray(row.first_week_plan)
     ? (row.first_week_plan as LooseRow)
     : null;
-  const waterTargetMl = asNumber(row.daily_water_goal_ml) || asNumber(row.water_target_ml, 3000);
+  const bodyWeightWaterTargetMl = calculateHydrationTarget(asNumber(row.weight_kg, 75)).waterTargetMl;
+  const waterTargetMl = asWaterTargetMl(
+    row.daily_water_goal_ml,
+    asWaterTargetMl(row.water_target_ml, bodyWeightWaterTargetMl),
+  );
   const generatedPlan = planRow
       ? {
         workoutSplit: asText(planRow.workoutSplit) || asText(row.workout_split) || asText(row.split, 'PPL schedule'),
@@ -138,9 +154,10 @@ export function profileFromRow(row: LooseRow): {
         firstWeekGoals: asStringArray(planRow.firstWeekGoals).length > 0
           ? asStringArray(planRow.firstWeekGoals)
           : asStringArray(planRow.bullets),
-        waterTargetMl: asNumber(planRow.waterTargetMl, waterTargetMl),
+        waterTargetMl: asWaterTargetMl(planRow.waterTargetMl, asWaterTargetMl(planRow.water_target_ml, waterTargetMl)),
       }
     : null;
+  const effectiveWaterTargetMl = generatedPlan?.waterTargetMl ?? waterTargetMl;
 
   return {
     profile: {
@@ -153,9 +170,11 @@ export function profileFromRow(row: LooseRow): {
       heightCm: asNumber(row.height_cm, 175),
       weightKg: asNumber(row.weight_kg, 75),
       targetWeightKg: asNumber(row.target_weight_kg, 72),
+      targetDate: asText(row.target_date),
+      weeklyWeightChangeKg: Math.max(0, Math.min(1, asNumber(row.weekly_weight_change_kg, 0.5))),
       gymDaysPerWeek: asNumber(row.gym_days_per_week, 4),
       split: asText(row.workout_split) || asText(row.split, 'PPL schedule'),
-      waterTargetMl,
+      waterTargetMl: effectiveWaterTargetMl,
       currency: 'INR',
       measurements: 'metric',
       goal: asText(row.goal),

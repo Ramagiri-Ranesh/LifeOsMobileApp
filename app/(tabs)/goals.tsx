@@ -28,6 +28,7 @@ import type { Json } from '@/types/database';
 
 type GoalsTab = 'week' | 'month';
 type GoalFormType = 'monthly' | 'weekly' | 'daily';
+type GoalFormError = { field: 'title' | 'target' | 'unit' | 'general'; message: string };
 type LooseRow = Record<string, Json | undefined>;
 
 type GoalCategory = {
@@ -106,6 +107,17 @@ const GYM_MONTHLY_TITLE = 'Gym sessions';
 const GYM_WEEKLY_TITLE = 'Gym sessions this week';
 
 const priorityOptions = ['low', 'medium', 'high'];
+
+const UNIT_SUGGESTIONS: Record<string, string[]> = {
+  learning: ['lessons', 'pages', 'hours'],
+  work: ['tasks', 'projects', 'hours'],
+  health: ['days', 'habits', 'workouts'],
+  gym: ['sessions', 'workouts', 'days'],
+};
+
+function unitSuggestions(categoryName: string) {
+  return UNIT_SUGGESTIONS[categoryName.trim().toLowerCase()] ?? ['times', 'tasks', 'hours'];
+}
 
 function asText(value: Json | undefined, fallback = '') {
   return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
@@ -686,6 +698,7 @@ export default function GoalsScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [formError, setFormError] = useState<GoalFormError | null>(null);
   const [addVisible, setAddVisible] = useState(false);
   const [draft, setDraft] = useState<GoalDraft>({
     type: 'monthly',
@@ -861,6 +874,7 @@ export default function GoalsScreen() {
         notify: false,
         editTaskId: '',
       });
+      setFormError(null);
       setAddVisible(true);
     },
     [categories],
@@ -887,6 +901,7 @@ export default function GoalsScreen() {
         notify: false,
         editTaskId: task.id,
       });
+      setFormError(null);
       setAddVisible(true);
     },
     [categories, monthlyGoals, weeklyGoals],
@@ -945,12 +960,23 @@ export default function GoalsScreen() {
 
   const saveGoal = useCallback(async () => {
     const title = draft.title.trim();
+    setFormError(null);
     if (!currentUserId) {
-      Alert.alert('Login required', 'Please login before adding goals.');
+      setFormError({ field: 'general', message: 'Please log in before adding a goal.' });
       return;
     }
     if (!title) {
-      Alert.alert('Title needed', 'Add a title before saving.');
+      setFormError({ field: 'title', message: 'Add a name for this goal, such as “Finish Phase 2”.' });
+      return;
+    }
+
+    const parsedTarget = Number(draft.target);
+    if (draft.type !== 'daily' && (!Number.isFinite(parsedTarget) || parsedTarget <= 0)) {
+      setFormError({ field: 'target', message: 'Enter a total greater than 0, such as 3.' });
+      return;
+    }
+    if (draft.type !== 'daily' && !draft.unit.trim()) {
+      setFormError({ field: 'unit', message: 'Add what you are counting, such as phases, lessons, or hours.' });
       return;
     }
 
@@ -963,8 +989,8 @@ export default function GoalsScreen() {
       }
       const categoryId = selectedWeekly?.categoryId || selectedMonthly?.categoryId || (await resolveCategoryId());
       const categoryName = categoryById.get(categoryId)?.name || null;
-      const targetValue = Math.max(1, Number(draft.target) || 1);
-      const unit = draft.unit.trim() || 'items';
+      const targetValue = parsedTarget;
+      const unit = draft.unit.trim();
       const isSessionGoal =
         selectedWeekly?.unit.toLowerCase().includes('session') ||
         selectedMonthly?.unit.toLowerCase().includes('session') ||
@@ -1060,6 +1086,7 @@ export default function GoalsScreen() {
       await loadGoals();
     } catch (saveError) {
       const message = saveError instanceof Error ? saveError.message : 'Goal was not saved.';
+      setFormError({ field: 'general', message });
       Alert.alert('Goal not saved', message);
     } finally {
       setSaving(false);
@@ -1366,6 +1393,12 @@ export default function GoalsScreen() {
     const selectedMonthly = monthlyGoals.find((goal) => goal.id === draft.parentMonthlyGoalId);
     const selectedWeekly = weeklyGoals.find((goal) => goal.id === draft.parentWeeklyGoalId);
     const effectiveCategoryId = selectedWeekly?.categoryId || selectedMonthly?.categoryId || draft.categoryId;
+    const selectedCategoryName =
+      draft.newCategoryName.trim() || categoryById.get(effectiveCategoryId)?.name || 'General';
+    const suggestedUnits = unitSuggestions(selectedCategoryName);
+    const targetAmount = Number(draft.target);
+    const hasMeasurableTarget = Number.isFinite(targetAmount) && targetAmount > 0 && Boolean(draft.unit.trim());
+    const goalPeriod = draft.type === 'monthly' ? 'this month' : 'this week';
 
     return (
       <Modal visible={addVisible} animationType="slide" transparent onRequestClose={() => setAddVisible(false)}>
@@ -1574,49 +1607,129 @@ export default function GoalsScreen() {
                   style={styles.input}
                 />
 
-                <TextInput
-                  value={draft.title}
-                  onChangeText={(title) => setDraft((value) => ({ ...value, title }))}
-                  placeholder="Goal title"
-                  placeholderTextColor={colors.textMuted}
-                  style={styles.input}
-                />
-
                 <View style={styles.formSection}>
-                  <View style={styles.measureHeader}>
-                    <Text style={styles.fieldLabel}>How will you measure it?</Text>
-                    <Text style={styles.helperText}>Example: 10 lessons, 4 workouts, 1 project.</Text>
+                  <Text style={styles.fieldLabel}>What do you want to achieve?</Text>
+                  <TextInput
+                    value={draft.title}
+                    onChangeText={(title) => {
+                      setDraft((value) => ({ ...value, title }));
+                      setFormError(null);
+                    }}
+                    placeholder="e.g. Finish my React Native course"
+                    placeholderTextColor={colors.textMuted}
+                    style={[styles.input, formError?.field === 'title' && styles.inputError]}
+                  />
+                  {formError?.field === 'title' ? <Text style={styles.fieldError}>{formError.message}</Text> : null}
+                </View>
+
+                <View style={styles.targetCard}>
+                  <View style={styles.targetIntroRow}>
+                    <View style={styles.targetIcon}>
+                      <Ionicons name="flag-outline" size={18} color={colors.violetLight} />
+                    </View>
+                    <View style={styles.targetIntroCopy}>
+                      <Text style={styles.targetTitle}>Set a clear finish line</Text>
+                      <Text style={styles.targetDescription}>
+                        Add how many you want to finish and what you will count.
+                      </Text>
+                    </View>
                   </View>
+
+                  <View style={styles.exampleBox}>
+                    <Text style={styles.exampleText}>Example: Read 5 books</Text>
+                    <Text style={styles.exampleDetail}>
+                      <Text style={styles.exampleStrong}>5</Text> is how many · <Text style={styles.exampleStrong}>books</Text> is what you count
+                    </Text>
+                  </View>
+
                   <View style={styles.inlineFields}>
-                    <View style={styles.fieldColumn}>
-                      <Text style={styles.inputLabel}>Target number</Text>
+                    <View style={styles.amountColumn}>
+                      <Text style={styles.inputLabel}>How many?</Text>
                       <TextInput
                         value={draft.target}
-                        onChangeText={(target) => setDraft((value) => ({ ...value, target }))}
-                        placeholder="10"
+                        onChangeText={(target) => {
+                          setDraft((value) => ({ ...value, target }));
+                          setFormError(null);
+                        }}
+                        accessibilityLabel="Goal amount"
+                        placeholder="e.g. 10"
                         keyboardType="decimal-pad"
                         placeholderTextColor={colors.textMuted}
-                        style={styles.input}
+                        style={[styles.input, formError?.field === 'target' && styles.inputError]}
                       />
+                      <Text style={styles.fieldHint}>Total to reach</Text>
                     </View>
                     <View style={styles.fieldColumn}>
-                      <Text style={styles.inputLabel}>Measure</Text>
+                      <Text style={styles.inputLabel}>What are you counting?</Text>
                       <TextInput
                         value={draft.unit}
-                        onChangeText={(unit) => setDraft((value) => ({ ...value, unit }))}
-                        placeholder="lessons"
+                        onChangeText={(unit) => {
+                          setDraft((value) => ({ ...value, unit }));
+                          setFormError(null);
+                        }}
+                        accessibilityLabel="What the goal counts"
+                        placeholder="e.g. lessons"
                         placeholderTextColor={colors.textMuted}
-                        style={styles.input}
+                        style={[styles.input, formError?.field === 'unit' && styles.inputError]}
                       />
+                      <Text style={styles.fieldHint}>Use one simple word</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.suggestionBlock}>
+                    <Text style={styles.suggestionLabel}>Common for {selectedCategoryName}</Text>
+                    <View style={styles.suggestionRow}>
+                      {suggestedUnits.map((unit) => {
+                        const selected = draft.unit.trim().toLowerCase() === unit;
+                        return (
+                          <TouchableOpacity
+                            key={unit}
+                            accessibilityRole="button"
+                            onPress={() => {
+                              setDraft((value) => ({ ...value, unit }));
+                              setFormError(null);
+                            }}
+                            style={[styles.unitChip, selected && styles.unitChipActive]}>
+                            <Text style={[styles.unitChipText, selected && styles.unitChipTextActive]}>{unit}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+
+                  <View style={[styles.goalPreview, hasMeasurableTarget && styles.goalPreviewReady]}>
+                    <Ionicons
+                      name={hasMeasurableTarget ? 'checkmark-circle' : 'information-circle-outline'}
+                      size={20}
+                      color={hasMeasurableTarget ? colors.emeraldLight : colors.textSecondary}
+                    />
+                    <View style={styles.goalPreviewCopy}>
+                      <Text style={styles.goalPreviewLabel}>Your progress will look like</Text>
+                      <Text style={styles.goalPreviewValue}>
+                        {hasMeasurableTarget ? `0 of ${draft.target.trim()} ${draft.unit.trim()} ${goalPeriod}` : '0 of —'}
+                      </Text>
                     </View>
                   </View>
                 </View>
               </>
             )}
 
+            {formError ? (
+              <View accessibilityLiveRegion="polite" style={styles.formErrorBanner}>
+                <Ionicons name="alert-circle" size={19} color={colors.rose} />
+                <Text style={styles.formErrorText}>{formError.message}</Text>
+              </View>
+            ) : null}
+
             <TouchableOpacity disabled={saving} style={[styles.primaryButton, saving && styles.disabledButton]} onPress={() => void saveGoal()}>
               <Text style={styles.primaryButtonText}>
-                {saving ? 'Saving...' : draft.editTaskId ? 'Update task' : draft.type === 'daily' ? 'Save task' : 'Save'}
+                {saving
+                  ? 'Saving...'
+                  : draft.editTaskId
+                    ? 'Update task'
+                    : draft.type === 'daily'
+                      ? 'Save task'
+                      : `Create ${draft.type} goal`}
               </Text>
             </TouchableOpacity>
             </ScrollView>
@@ -1882,7 +1995,6 @@ function createStyles(colors: ColorPalette) {
   inputLabel: { ...typography.labelCaps, color: colors.textSecondary },
   formSection: { gap: 8 },
   linkBlock: { gap: 8 },
-  measureHeader: { gap: 4 },
   chipScroll: { gap: 10, paddingBottom: 2, paddingRight: spacing.gutter },
   categoryChip: {
     alignItems: 'center',
@@ -1909,8 +2021,80 @@ function createStyles(colors: ColorPalette) {
     paddingHorizontal: spacing.sm,
     paddingVertical: 14,
   },
+  inputError: { borderColor: colors.rose },
+  fieldError: { color: colors.rose, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+  formErrorBanner: {
+    alignItems: 'center',
+    backgroundColor: colors.roseBg,
+    borderColor: `${colors.rose}66`,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 9,
+    padding: 12,
+  },
+  formErrorText: { color: colors.textPrimary, flex: 1, fontSize: 12, fontWeight: '600', lineHeight: 18 },
   inlineFields: { flexDirection: 'row', gap: 12 },
   fieldColumn: { flex: 1, gap: 8 },
+  amountColumn: { gap: 8, width: 112 },
+  fieldHint: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
+  targetCard: {
+    backgroundColor: colors.surface2,
+    borderColor: colors.border,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    gap: 16,
+    padding: spacing.sm,
+  },
+  targetIntroRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
+  targetIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.violetBg,
+    borderRadius: radii.inner,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  targetIntroCopy: { flex: 1, gap: 2 },
+  targetTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '800', lineHeight: 22 },
+  targetDescription: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+  exampleBox: {
+    backgroundColor: colors.surface3,
+    borderRadius: radii.inner,
+    gap: 3,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  exampleText: { color: colors.textPrimary, fontSize: 13, fontWeight: '700' },
+  exampleDetail: { color: colors.textSecondary, fontSize: 12, lineHeight: 18 },
+  exampleStrong: { color: colors.violetLight, fontWeight: '800' },
+  suggestionBlock: { gap: 8 },
+  suggestionLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '600' },
+  suggestionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  unitChip: {
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  unitChipActive: { backgroundColor: colors.violetBg, borderColor: colors.violet },
+  unitChipText: { color: colors.textSecondary, fontSize: 12, fontWeight: '700' },
+  unitChipTextActive: { color: colors.violetLight },
+  goalPreview: {
+    alignItems: 'center',
+    backgroundColor: colors.surface1,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    padding: 12,
+  },
+  goalPreviewReady: { borderColor: `${colors.emeraldLight}66` },
+  goalPreviewCopy: { flex: 1, gap: 2 },
+  goalPreviewLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
+  goalPreviewValue: { color: colors.textPrimary, fontSize: 14, fontWeight: '800', lineHeight: 20 },
   flexInput: { flex: 1 },
   timePicker: {
     backgroundColor: colors.surface2,

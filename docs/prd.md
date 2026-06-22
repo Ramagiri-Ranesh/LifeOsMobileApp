@@ -6,6 +6,23 @@ LifeOS is a dark-mode personal tracking and planning app built with React Native
 
 This PRD is based on the current repository structure and implementation. It does not assume the earlier prompt as truth. Where code references a feature but the schema or route is incomplete, that gap is documented explicitly.
 
+### June 22, 2026 nutrition and training correction status
+
+- Fixed food search macros showing `0` when legacy serving columns are zero but `*_per_100g` columns contain the real values. Serving macros are now derived using the serving-calorie ratio, while populated serving macros remain authoritative.
+- Added a responsive `0–1 kg/week` progress control to fitness onboarding, defaulted to the commonly used `0.5 kg/week` pace. Target date is derived and persisted instead of being typed into a cramped date field.
+- Fixed calorie targets so the local baseline and eligible AI recalibration produce maintenance calories first, then the selected weekly pace produces the goal-direction surplus or deficit. Selecting `0 kg/week` keeps the target at maintenance.
+- Fixed hydration planning so required millilitres are calculated first from AI or the body-weight fallback (`35 ml/kg`, minimum `2200 ml`), rounded up into complete 250 ml glasses, and then persisted. Nine glasses is only a possible calculated result, never a hardcoded default.
+- Replaced generic Push/Pull/Legs/Upper/Lower exercises with the approved 15-exercise catalogues. The same catalogue is used by deterministic onboarding plans, AI body-recalibration normalization, Gym templates, and the Add Exercise library.
+
+### June 22, 2026 AI workflow status
+
+- AI is unavailable before registration is complete and the user has an authenticated profile with `onboarding_completed = true`.
+- Registration saves the deterministic starting plan and starts the first 14-day recalibration window.
+- Onboarding plan reveal, Daily Hub briefs, Nutrition, Goals, insight cards, notifications, and background work use deterministic application logic and do not call an AI provider.
+- Logging body weight writes only to `body_metrics`; it does not immediately change `profiles.weight_kg`, calories, macros, water, or workout targets.
+- The Body Progress **Generate AI targets** action is the only target-recalibration AI path. It unlocks once per 14 days, uses the latest logged weight, and updates profile weight and targets together only after a valid AI response; failures leave the profile unchanged.
+- AI Coach allows at most two user questions per UTC day. The UI displays usage and disables the composer at two; the `lifeos-ai` Edge Function is the authoritative enforcement boundary.
+
 ## 2. Source Of Truth Reviewed
 
 The PRD is grounded in these project areas:
@@ -27,7 +44,7 @@ LifeOS should help one user turn profile data and goals into daily execution:
 - Present a single Daily Hub for today's plan, Life Score, calories, hydration, workout, and tasks.
 - Let the user log meals, foods, workouts, body weight, water, tasks, goals, and spending.
 - Show analytics across life score, calories, workouts, strength, tasks, weight, correlations, and category scores.
-- Offer AI-assisted planning, meal suggestions, daily briefs, pattern insights, and chat coaching.
+- Offer AI only for user-triggered biweekly target recalibration and two daily AI Coach questions.
 - Send local notifications and background anomaly alerts.
 - Protect the app with optional biometric/device authentication.
 
@@ -55,8 +72,9 @@ LifeOS should help one user turn profile data and goals into daily execution:
 Current implementation:
 
 - OpenAI chat completions use the `lifeos-ai` Supabase Edge Function with server-side `OPENAI_API_KEY`.
-- Local Ollama fallback remains available at `http://localhost:11434/api/generate` when explicitly allowed.
-- Settings allows `openai` or `ollama`.
+- The Edge Function accepts only authenticated `coach` and `body_recalibration` purposes after onboarding completion.
+- Coach requests are limited to two per UTC day; body recalibration is limited by `profiles.last_body_recalibration_at` and a 14-day cooldown.
+- These production paths do not fall back to Ollama, preventing a local provider from bypassing the server limits.
 
 Important product decision:
 
@@ -201,6 +219,8 @@ Requirements:
 - Choose experience: beginner, intermediate, advanced.
 - Step gym days per week from 1 to 7.
 - Capture current and target weight.
+- Show a touch progress control from `0` to `1 kg/week` in 0.1 kg increments, with `0.5` visible as the middle reference.
+- Derive and show the estimated target date from current weight, target weight, and selected pace. At `0 kg/week`, show maintenance pace with no target date.
 - Save to local onboarding draft.
 
 Primary data:
@@ -237,11 +257,12 @@ Purpose:
 
 Requirements:
 
-- Calculate TDEE and macros locally.
-- Calculate water target from body weight.
+- Calculate local maintenance TDEE, allow a bounded AI maintenance estimate, then deterministically add/subtract `weekly pace × 7,700 / 7` calories according to build/cut/target direction before calculating macros.
+- Allow the user-selected magnitude from `0–1 kg/week`; never confuse maintenance calories with the final surplus/deficit target.
+- Accept AI hydration only as required millilitres. If unavailable, calculate `max(2200, weightKg × 35)` ml, then round up to complete 250 ml glasses.
 - Build fallback weekly workout plan from gym days per week.
 - If AI calculation is enabled, request a JSON plan through current AI provider.
-- Preserve calculated nutrition targets even when AI generates workout plan text.
+- Treat AI/local maintenance and the deterministic selected-pace adjustment as separate values in the result UI.
 - Cache plan requests in session.
 - Show calorie target, macros, workout split, day pills, water target, and first-week goals.
 - Save profile, targets, and generated plan to local store before registration.
@@ -300,7 +321,7 @@ Requirements:
 - Toggle task completion.
 - Log water in 250 ml increments.
 - Sync water to Supabase with user/date uniqueness.
-- Generate a daily brief through current AI provider, with fallback copy.
+- Generate the one-line daily brief locally from current score, calories, and task progress; do not call AI.
 - Route quick actions to nutrition and gym.
 - Open reflection modal through navigation params.
 
@@ -329,6 +350,9 @@ Requirements:
 - Load meals for selected date.
 - Load meal templates.
 - Search `food_items` with local Indian fallback foods.
+- Read numeric values whether Supabase returns numbers or numeric strings.
+- Prefer populated serving macro columns; when legacy serving macros are zero, derive each macro from its `*_per_100g` value and the serving calorie ratio.
+- Sum item snapshots once; do not add meal-level cached totals on top of item totals.
 - Add custom food items.
 - Log meal items into breakfast, mid-morning, lunch, evening snack, dinner, or bedtime snack.
 - Delete meal items by long press.
@@ -357,6 +381,7 @@ Purpose:
 Requirements:
 
 - Build workout templates from generated plan and profile fallback.
+- Normalize Push, Pull, Legs, Upper, and Lower templates to the approved exercise catalogue in `lib/exerciseCatalog.ts`; AI text cannot silently replace these lists.
 - Ensure today's workout task exists.
 - Support selecting a schedule day.
 - Log sets with weight and reps.
@@ -414,7 +439,7 @@ Requirements:
 - Create weekly goals.
 - Break monthly goals into linked weekly goals.
 - Add finance transactions.
-- Show AI pattern insight and weekly/monthly review snippets.
+- Show locally derived pattern and weekly/monthly review snippets without AI requests.
 
 Primary data:
 
@@ -473,7 +498,9 @@ Requirements:
 - Persist/reload recent coach messages.
 - Let user select context chips: diet today, today's workout, weekly progress, sleep last night.
 - Build recent context from meals, workouts, weekly goals, and life scores.
-- Send prompt to current AI provider.
+- Require completed registration and authentication.
+- Send at most two prompts per user per UTC day to the Edge Function with purpose `coach`.
+- Display daily usage and disable the composer after two questions; keep backend enforcement authoritative across devices.
 - Infer message type from answer text.
 - Animate AI response word by word.
 - Allow meal suggestion cards to log an evening snack through nutrition store.
@@ -529,7 +556,7 @@ Requirements:
 - Open from the Home avatar and Settings profile section.
 - Show avatar initial, display name, username, calorie target, protein target, and gym-day target.
 - Toggle between read-only and edit mode.
-- Edit display name, gender, age, height, current weight, target weight, gym days, water target, goal, experience level, and meal timing.
+- Edit display name, gender, age, height, current weight, target weight, weekly weight-change pace, gym days, water target, goal, experience level, and meal timing; target date is derived.
 - Save edits to `profiles` and update the local `useUserStore` profile/onboarding target state.
 - Validate required display name and clamp gym days/water target to usable ranges.
 
@@ -718,26 +745,23 @@ Requirement:
 
 Current behavior:
 
-- `callAI` uses the `lifeos-ai` Edge Function by default when the selected model is not `ollama`.
-- Local Ollama is used only when `allowLocalAI` is passed.
-- Empty or failed AI responses fall back to local UI copy or Ollama when enabled for that call.
+- `callAI` requires an explicit purpose: `coach` or `body_recalibration`.
+- Both purposes require an authenticated user whose profile has completed onboarding.
+- `coach` is capped at two questions per UTC day using durable `ai_rate_limits` when the service-role secret is configured.
+- `body_recalibration` is rejected until 14 days after `last_body_recalibration_at`.
+- No other product surface calls `callAI`.
 
-Required fixes:
+Required operational work:
 
 - Decide provider strategy: keep OpenAI/Ollama or migrate to Gemini.
 - Make provider names in Settings, Plan Reveal, AI Coach, and profile payload match the chosen provider.
-- Ensure every AI feature opts into the desired provider intentionally.
-- Add hard fallback copy for every AI surface.
-- Add prompt safety rules for nutrition suggestions. The current code blocks curd/dahi/oats in meal suggestions and validates returned suggestion text.
+- Deploy the updated `lifeos-ai` function with `OPENAI_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY`.
+- Smoke-test coach quota and recalibration cooldown against the deployed backend.
 
 AI surfaces:
 
-- Plan Reveal: JSON first-week plan.
-- Daily Hub: one-line daily brief.
-- Nutrition: next-meal suggestion.
-- Goals: pattern insight and weekly review.
-- AI Coach: chat response and insight cards.
-- Notifications: weekly AI review and anomaly alerts.
+- Body Progress: user-triggered AI target recalibration, once every 14 days.
+- AI Coach: user-triggered chat response, at most two questions per UTC day.
 
 ## 13. Notifications And Background Work
 
@@ -814,13 +838,14 @@ The current LifeOS MVP is acceptable when:
 - A clean Supabase project can run all migrations without missing-table failures.
 - A new user can complete onboarding, reveal a plan, register, and land on Daily Hub.
 - A returning user can login and restore profile, targets, generated plan, and split.
-- Daily Hub can create/toggle tasks, sync water, show calories, show workout state, and generate/fallback a daily brief.
+- Daily Hub can create/toggle tasks, sync water, show calories, show workout state, and produce a deterministic daily brief without AI.
 - Home avatar opens editable Profile, and Home notification icon opens the persisted notification inbox.
 - Nutrition can add foods, log meal items, apply templates, delete items, and clone yesterday.
 - Gym can log sets, save sessions and sets, save optional body weight, complete workout task, and show workout history.
 - Goals can load and create weekly goals, break monthly goals into weekly goals, and log finance transactions.
 - Analytics loads real domain data when present and handles missing data deliberately.
-- AI Coach can load context, send messages to the selected provider, persist messages, and handle provider failure.
+- Weight logging remains in `body_metrics` until the eligible Generate AI targets action updates profile weight and targets together.
+- AI Coach can load context, enforce two questions per UTC day in UI/backend, persist messages, and handle provider failure.
 - Settings can open Profile, schedule notifications, validate times, toggle app lock, export settings, change AI model, and logout.
 - Notifications inbox can load persisted notifications, mark one/all as read, and route notification taps.
 - All user-owned data is protected by owner-scoped RLS or an equivalent access model.

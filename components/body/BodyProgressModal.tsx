@@ -166,11 +166,7 @@ export function BodyProgressModal({ visible, onClose, onChanged }: Props) {
 
     setSavingBodyLog(true);
     try {
-      const saved = await saveBodyMetric(nextLog);
-      if (kind === 'weight' && saved.weightKg) {
-        setProfile({ ...profile, weightKg: saved.weightKg });
-        await supabase.from('profiles').update({ weight_kg: saved.weightKg, updated_at: new Date().toISOString() }).eq('id', currentUserId);
-      }
+      await saveBodyMetric(nextLog);
       await loadProgress();
       onChanged?.();
       Alert.alert(kind === 'weight' ? 'Weight logged' : 'Measurements saved', kind === 'weight' ? "Today's weight is now in your brief." : 'Weekly body metrics are saved.');
@@ -180,7 +176,7 @@ export function BodyProgressModal({ visible, onClose, onChanged }: Props) {
     } finally {
       setSavingBodyLog(false);
     }
-  }, [armCm, bodyNotes, chestCm, currentUserId, dailyWeight, hipCm, loadProgress, onChanged, profile, setProfile, thighCm, todayBodyLog, waistCm]);
+  }, [armCm, bodyNotes, chestCm, currentUserId, dailyWeight, hipCm, loadProgress, onChanged, profile, thighCm, todayBodyLog, waistCm]);
 
   const generateTargets = useCallback(async () => {
     if (!currentUserId || !profile || !generationReady) return;
@@ -211,6 +207,8 @@ export function BodyProgressModal({ visible, onClose, onChanged }: Props) {
           split: result.split,
           workout_split: result.split,
           first_week_plan: planForProfile,
+          daily_water_goal_ml: result.generatedPlan.waterTargetMl,
+          water_target_ml: result.generatedPlan.waterTargetMl,
           last_body_recalibration_at: now,
           body_recalibration_count: (profile.bodyRecalibrationCount ?? 0) + 1,
           updated_at: now,
@@ -223,12 +221,14 @@ export function BodyProgressModal({ visible, onClose, onChanged }: Props) {
 
       const parsed = profileFromRow((data ?? {}) as LooseRow);
       setProfile(parsed.profile);
-      setPlanTargets(parsed.calorieGoal || result.calorieGoal || calorieGoal, parsed.macros || result.macros || macros, parsed.profile.waterTargetMl);
+      setPlanTargets(parsed.calorieGoal || result.calorieGoal || calorieGoal, parsed.macros || result.macros || macros, result.generatedPlan.waterTargetMl);
       setGeneratedPlan(parsed.generatedPlan ?? result.generatedPlan);
       setCurrentSplit(parsed.generatedPlan?.workoutSplit ?? parsed.profile.split);
       updateOnboardingProfile({
         currentWeight: parsed.profile.weightKg,
         targetWeight: parsed.profile.targetWeightKg,
+        targetDate: parsed.profile.targetDate || '',
+        weeklyWeightChangeKg: parsed.profile.weeklyWeightChangeKg ?? 0.5,
         gymDaysPerWeek: parsed.profile.gymDaysPerWeek,
       });
       onChanged?.();
@@ -238,7 +238,10 @@ export function BodyProgressModal({ visible, onClose, onChanged }: Props) {
       );
     } catch (error) {
       console.warn('Unable to generate body targets', error);
-      Alert.alert('Generation failed', 'Could not update calories, macros, and workout split.');
+      Alert.alert(
+        'AI generation failed',
+        error instanceof Error ? error.message : 'Your profile weight and targets were not changed.',
+      );
     } finally {
       setGenerating(false);
     }

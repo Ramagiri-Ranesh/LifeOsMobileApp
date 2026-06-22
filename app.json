@@ -28,7 +28,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.SCHEDULE_EXACT_ALARM"
       ],
       "package": "com.lifeos.app"
     },
@@ -39,7 +40,13 @@
     },
     "plugins": [
       "expo-router",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "lifeos-reminders",
+          "color": "#7C3AED"
+        }
+      ],
       "expo-local-authentication",
       [
         "expo-splash-screen",

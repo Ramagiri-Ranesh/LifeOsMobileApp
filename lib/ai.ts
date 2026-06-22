@@ -5,19 +5,17 @@ import { useUserStore } from '@/stores/useUserStore';
 import { supabase } from '@/lib/supabase';
 
 type AIContext = Record<string, unknown>;
+export type AIPurpose = 'coach' | 'body_recalibration';
 type CallAIOptions = {
   allowLocalAI?: boolean;
   allowOpenAI?: boolean;
-  allowUnauthenticatedAI?: boolean;
+  purpose: AIPurpose;
   responseFormat?: 'json_object';
 };
 
 const DEFAULT_OLLAMA_URL = 'http://localhost:11434/api/generate';
 const LIFEOS_AI_ENABLED = process.env.EXPO_PUBLIC_LIFEOS_AI_ENABLED === 'true';
-const DAILY_BRIEF_CACHE_MS = 10 * 60 * 1000;
-export const AI_DAILY_LIMIT_MESSAGE = 'Daily AI limit reached. You can make 5 AI requests per day.';
-const aiResponseCache = new Map<string, { text: string; expiresAt: number }>();
-const aiRequests = new Map<string, Promise<string>>();
+export const AI_DAILY_LIMIT_MESSAGE = 'Daily AI Coach limit reached. You can ask 2 questions per day.';
 
 export class AIRequestError extends Error {
   status?: number;
@@ -90,39 +88,7 @@ function buildSystemContext(context?: AIContext) {
   };
 }
 
-function localDateKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-async function callCachedAI(
-  cacheKey: string,
-  ttlMs: number,
-  prompt: string,
-  context?: AIContext,
-  options?: CallAIOptions,
-) {
-  const now = Date.now();
-  const cached = aiResponseCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) return cached.text;
-
-  const pending = aiRequests.get(cacheKey);
-  if (pending) return pending;
-
-  const request = callAI(prompt, context, options).then((text) => {
-    aiResponseCache.set(cacheKey, { text, expiresAt: Date.now() + ttlMs });
-    return text;
-  }).finally(() => {
-    aiRequests.delete(cacheKey);
-  });
-
-  aiRequests.set(cacheKey, request);
-  return request;
-}
-
-export async function callAI(prompt: string, context?: AIContext, options?: CallAIOptions) {
+export async function callAI(prompt: string, context: AIContext | undefined, options: CallAIOptions) {
   const systemContext = buildSystemContext(context);
   const aiModel = useSettingsStore.getState().aiModel;
   const allowOpenAI = options?.allowOpenAI ?? true;
@@ -130,13 +96,14 @@ export async function callAI(prompt: string, context?: AIContext, options?: Call
   if (allowOpenAI && aiModel !== 'ollama' && LIFEOS_AI_ENABLED) {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session && !options?.allowUnauthenticatedAI) return '';
+      if (!sessionData.session) throw new AIRequestError('Complete registration and sign in before using AI.', 401);
 
       const { data, error } = await supabase.functions.invoke('lifeos-ai', {
         body: {
           prompt,
           context: systemContext,
-          responseFormat: options?.responseFormat,
+          purpose: options.purpose,
+          responseFormat: options.responseFormat,
         },
       });
 
@@ -152,7 +119,7 @@ export async function callAI(prompt: string, context?: AIContext, options?: Call
       const isQuotaLimit = status === 429 || message === AI_DAILY_LIMIT_MESSAGE;
 
       if (isQuotaLimit && !options?.allowLocalAI) {
-        throw new AIRequestError(AI_DAILY_LIMIT_MESSAGE, status);
+        throw new AIRequestError(message || AI_DAILY_LIMIT_MESSAGE, status);
       }
       if (__DEV__) console.debug('LifeOS AI edge function unavailable; trying local AI fallback.', error);
     }
@@ -180,42 +147,3 @@ export async function callAI(prompt: string, context?: AIContext, options?: Call
     return '';
   }
 }
-
-export const getMealSuggestion = (context?: AIContext) =>
-  callAI(
-    [
-      'Suggest one concise, practical next meal for today.',
-      'NEVER suggest curd, dahi, oats, oatmeal, overnight oats, or any oat-based food.',
-      'User avoids: curd (dahi), oats.',
-      'Cuisine preference: South Indian, Hyderabadi, Telugu.',
-      'Suggest from: eggs, paneer, dal varieties, rice dishes, chapathi, peanuts, chana, sprouts, chicken, banana, seasonal fruits.',
-      'Return one sentence only.',
-    ].join(' '),
-    {
-      ...context,
-      foodsToAvoid: Array.from(
-        new Set([...(Array.isArray(context?.foodsToAvoid) ? context.foodsToAvoid : []), 'curd', 'dahi', 'oats']),
-      ),
-      cuisinePreference: ['South Indian', 'Hyderabadi', 'Telugu'],
-    },
-  );
-
-export const getWeeklyReview = (context?: AIContext) =>
-  callAI('Write a concise weekly review across nutrition, gym, goals, and finance.', context);
-
-export const getDailyBrief = (context?: AIContext) => {
-  const userId = useUserStore.getState().currentUserId ?? 'anonymous';
-  const date = typeof context?.date === 'string' ? context.date : localDateKey();
-  return callCachedAI(
-    `daily-brief:${userId}:${date}`,
-    DAILY_BRIEF_CACHE_MS,
-    'Create one concise daily command-center sentence with the most important next action. Return plain text only, no markdown.',
-    context,
-  );
-};
-
-export const getPatternInsight = () =>
-  callAI('Identify one pattern from recent meals, workouts, and goals.', undefined, { allowOpenAI: false, allowLocalAI: true });
-
-export const getNaturalLanguageTask = (task: string) =>
-  callAI(`Convert this natural-language task into structured LifeOS task metadata: ${task}`);

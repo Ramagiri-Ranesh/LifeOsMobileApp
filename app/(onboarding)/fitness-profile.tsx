@@ -2,9 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { GestureResponderEvent } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radii, spacing, typography } from '@/lib/design';
+import { suggestedTargetDate } from '@/lib/calculations';
 import { useUserStore } from '@/stores/useUserStore';
 
 const goals = ['Build muscle & lose fat', 'Lose body fat', 'Build muscle', 'Stay fit'];
@@ -19,14 +21,35 @@ export default function FitnessProfileScreen() {
   const [gymDaysPerWeek, setGymDaysPerWeek] = useState(draft.gymDaysPerWeek);
   const [currentWeight, setCurrentWeight] = useState(String(draft.currentWeight));
   const [targetWeight, setTargetWeight] = useState(String(draft.targetWeight));
+  const [weeklyWeightChangeKg, setWeeklyWeightChangeKg] = useState(draft.weeklyWeightChangeKg ?? 0.5);
+  const [paceTrackWidth, setPaceTrackWidth] = useState(1);
+  const parsedCurrentWeight = Number(currentWeight) || draft.currentWeight;
+  const parsedTargetWeight = Number(targetWeight) || draft.targetWeight;
+  const targetDate = suggestedTargetDate(parsedCurrentWeight, parsedTargetWeight, new Date(), weeklyWeightChangeKg);
+  const paceDirection = goal === 'Build muscle'
+    ? 'gain'
+    : goal === 'Lose body fat'
+      ? 'loss'
+      : parsedTargetWeight > parsedCurrentWeight
+        ? 'gain'
+        : parsedTargetWeight < parsedCurrentWeight
+          ? 'loss'
+          : 'change';
+
+  const setPaceFromPress = (event: GestureResponderEvent) => {
+    const ratio = Math.max(0, Math.min(1, event.nativeEvent.locationX / paceTrackWidth));
+    setWeeklyWeightChangeKg(Number(ratio.toFixed(1)));
+  };
 
   const handleNext = () => {
     updateOnboardingProfile({
       goal,
       experienceLevel,
       gymDaysPerWeek,
-      currentWeight: Number(currentWeight) || draft.currentWeight,
-      targetWeight: Number(targetWeight) || draft.targetWeight,
+      currentWeight: parsedCurrentWeight,
+      targetWeight: parsedTargetWeight,
+      weeklyWeightChangeKg,
+      targetDate,
     });
     router.push('/(onboarding)/diet-profile');
   };
@@ -128,6 +151,52 @@ export default function FitnessProfileScreen() {
                 style={styles.input}
                 value={targetWeight}
               />
+            </View>
+          </View>
+          <View style={styles.paceCard}>
+            <View style={styles.paceHeader}>
+              <View>
+                <Text style={styles.inputLabel}>Planned weight change</Text>
+                <Text style={styles.paceHint}>Choose 0 to 1 kg per week</Text>
+              </View>
+              <Text style={styles.paceValue}>
+                {weeklyWeightChangeKg > 0 ? `${weeklyWeightChangeKg.toFixed(1)} kg ${paceDirection}/week` : 'Maintenance'}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityLabel={`Planned weight change ${weeklyWeightChangeKg.toFixed(1)} kilograms per week`}
+              accessibilityRole="adjustable"
+              onLayout={(event) => setPaceTrackWidth(Math.max(1, event.nativeEvent.layout.width))}
+              onPress={setPaceFromPress}
+              style={styles.paceTouchArea}>
+              <View style={styles.paceTrack}>
+                <View style={[styles.paceFill, { width: `${weeklyWeightChangeKg * 100}%` }]} />
+                <View style={[styles.paceThumb, { left: `${weeklyWeightChangeKg * 100}%` }]} />
+              </View>
+              <View style={styles.paceLabels}>
+                <Text style={styles.paceLabel}>0</Text>
+                <Text style={styles.paceLabel}>0.5</Text>
+                <Text style={styles.paceLabel}>1 kg</Text>
+              </View>
+            </Pressable>
+            <View style={styles.paceAdjustRow}>
+              <Pressable
+                accessibilityLabel="Decrease weekly pace"
+                accessibilityRole="button"
+                onPress={() => setWeeklyWeightChangeKg((value) => Number(Math.max(0, value - 0.1).toFixed(1)))}
+                style={styles.paceAdjustButton}>
+                <Ionicons name="remove" color={colors.textPrimary} size={18} />
+              </Pressable>
+              <Text style={styles.targetDateText}>
+                {targetDate ? `Estimated target date · ${targetDate}` : 'Maintenance pace · no target date'}
+              </Text>
+              <Pressable
+                accessibilityLabel="Increase weekly pace"
+                accessibilityRole="button"
+                onPress={() => setWeeklyWeightChangeKg((value) => Number(Math.min(1, value + 0.1).toFixed(1)))}
+                style={styles.paceAdjustButton}>
+                <Ionicons name="add" color={colors.textPrimary} size={18} />
+              </Pressable>
             </View>
           </View>
         </View>
@@ -293,6 +362,86 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
+  },
+  paceCard: {
+    backgroundColor: colors.surface1,
+    borderColor: colors.border,
+    borderRadius: radii.inner,
+    borderWidth: 1,
+    marginTop: spacing.xs,
+    padding: spacing.sm,
+  },
+  paceHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  paceHint: {
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+  paceValue: {
+    color: colors.violetLight,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  paceTouchArea: {
+    paddingBottom: 2,
+    paddingTop: spacing.sm,
+  },
+  paceTrack: {
+    backgroundColor: colors.surface2,
+    borderRadius: radii.pill,
+    height: 8,
+    position: 'relative',
+  },
+  paceFill: {
+    backgroundColor: colors.violet,
+    borderRadius: radii.pill,
+    height: 8,
+  },
+  paceThumb: {
+    backgroundColor: colors.violetLight,
+    borderColor: colors.textPrimary,
+    borderRadius: 9,
+    borderWidth: 2,
+    height: 18,
+    marginLeft: -9,
+    position: 'absolute',
+    top: -5,
+    width: 18,
+  },
+  paceLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.xs,
+  },
+  paceLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  paceAdjustRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'space-between',
+    marginTop: spacing.xs,
+  },
+  paceAdjustButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface2,
+    borderRadius: radii.pill,
+    height: 32,
+    justifyContent: 'center',
+    width: 32,
+  },
+  targetDateText: {
+    color: colors.textSecondary,
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   inputLabel: {
     color: colors.textMuted,

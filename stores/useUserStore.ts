@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import { calculateHydrationTarget, suggestedTargetDate } from '@/lib/calculations';
 
 export type GeneratedPlan = {
   workoutSplit: string;
@@ -33,6 +34,8 @@ export type UserProfile = {
   heightCm: number;
   weightKg: number;
   targetWeightKg: number;
+  targetDate?: string;
+  weeklyWeightChangeKg?: number;
   gymDaysPerWeek: number;
   split: string;
   waterTargetMl: number;
@@ -60,6 +63,8 @@ export type OnboardingProfile = {
   gymDaysPerWeek: number;
   currentWeight: number;
   targetWeight: number;
+  targetDate: string;
+  weeklyWeightChangeKg: number;
   cuisinePrefs: string[];
   foodsEaten: string[];
   foodsAvoided: string[];
@@ -100,6 +105,8 @@ const defaultOnboardingProfile: OnboardingProfile = {
   gymDaysPerWeek: 4,
   currentWeight: 75.2,
   targetWeight: 72,
+  targetDate: suggestedTargetDate(75.2, 72),
+  weeklyWeightChangeKg: 0.5,
   cuisinePrefs: ['South Indian', 'Hyderabadi', 'Telugu'],
   foodsEaten: ['Eggs', 'Banana', 'Milk', 'Rice', 'Dal', 'Chapathi', 'Peanuts', 'Chana'],
   foodsAvoided: [],
@@ -119,7 +126,7 @@ export const useUserStore = create<UserState>()(
       onboardingCompleted: false,
       calorieGoal: 2380,
       macros: { protein: 165, carbs: 240, fat: 72 },
-      waterTargetMl: 3000,
+      waterTargetMl: calculateHydrationTarget(defaultOnboardingProfile.currentWeight).waterTargetMl,
       generatedPlan: null,
       foodsToAvoid: [],
       cuisinePreference: ['Hyderabadi', 'South Indian', 'Telugu'],

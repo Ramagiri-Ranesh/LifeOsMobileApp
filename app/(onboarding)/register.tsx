@@ -5,7 +5,7 @@ import { Alert, Pressable, StatusBar, StyleSheet, Text, TextInput, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { createAuthUserForUsername, isUsernameAvailable, normalizeUsername, validateUsername } from '@/lib/auth';
-import { calculateMacros, calculateTDEE, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
+import { calculateGoalCalorieTarget, calculateHydrationTarget, calculateMacros, calculateTDEE, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
 import { buildProfilePayload } from '@/lib/profile';
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { saveAccountSettings } from '@/lib/settingsService';
@@ -267,15 +267,23 @@ function recoverRegistrationPlan(args: {
 
   const activityLevel = getActivityLevel(args.draft.gymDaysPerWeek);
   const fitnessGoal = getFitnessGoal(args.draft.goal);
-  const calorieGoal = calculateTDEE(
+  const maintenanceCalories = calculateTDEE(
     args.draft.currentWeight,
     args.draft.heightCm,
     args.draft.age,
     activityLevel,
     args.draft.gender,
   );
+  const calorieGoal = calculateGoalCalorieTarget({
+    maintenanceCalories,
+    currentWeightKg: args.draft.currentWeight,
+    targetWeightKg: args.draft.targetWeight,
+    targetDate: args.draft.targetDate,
+    weeklyWeightChangeKg: args.draft.weeklyWeightChangeKg,
+    goal: fitnessGoal,
+  }).calorieTarget;
   const macros = calculateMacros(calorieGoal, fitnessGoal);
-  const waterTargetMl = Math.round(Math.max(2200, args.draft.currentWeight * 35) / 250) * 250;
+  const waterTargetMl = calculateHydrationTarget(args.draft.currentWeight).waterTargetMl;
   const schedule = args.generatedPlan ?? fallbackDayPills(args.draft.gymDaysPerWeek);
   const generatedPlan: GeneratedPlan = args.generatedPlan ?? {
     workoutSplit: schedule.workoutSplit,
@@ -295,6 +303,8 @@ function recoverRegistrationPlan(args: {
     heightCm: args.draft.heightCm,
     weightKg: args.draft.currentWeight,
     targetWeightKg: args.draft.targetWeight,
+    targetDate: args.draft.targetDate,
+    weeklyWeightChangeKg: args.draft.weeklyWeightChangeKg,
     gymDaysPerWeek: args.draft.gymDaysPerWeek,
     split: generatedPlan.workoutSplit,
     waterTargetMl: generatedPlan.waterTargetMl,

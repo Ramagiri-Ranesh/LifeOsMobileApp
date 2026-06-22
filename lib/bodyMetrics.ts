@@ -1,4 +1,5 @@
-import { calculateMacros, calculateTDEE, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
+import { calculateGoalCalorieTarget, calculateMacros, calculateTDEE, normalizeWaterTargetMl, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
+import { exercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
 import { callAI } from '@/lib/ai';
 import { supabase } from '@/lib/supabase';
 import type { GeneratedPlan, UserProfile } from '@/stores/useUserStore';
@@ -18,6 +19,8 @@ export type BodyMetricLog = {
 };
 
 export type BodyRecalibration = {
+  maintenanceCalories: number;
+  calorieAdjustment: number;
   calorieGoal: number;
   macros: { protein: number; carbs: number; fat: number };
   generatedPlan: GeneratedPlan;
@@ -154,29 +157,32 @@ function getActivityLevel(gymDaysPerWeek: number): ActivityLevel {
 
 function goalFromProfile(goal?: string): FitnessGoal {
   const normalized = goal?.toLowerCase() ?? '';
+  if (normalized.includes('build muscle') && normalized.includes('lose fat')) return 'maintain';
   if (normalized.includes('lose')) return 'cut';
   if (normalized.includes('build muscle') && !normalized.includes('lose fat')) return 'bulk';
   return 'maintain';
 }
 
-function targetCalories(profile: UserProfile, latestWeightKg: number) {
-  const tdee = calculateTDEE(
+function maintenanceCalories(profile: UserProfile, latestWeightKg: number) {
+  return calculateTDEE(
     latestWeightKg,
     profile.heightCm,
     profile.age,
     getActivityLevel(profile.gymDaysPerWeek),
     profile.gender,
   );
-  const goal = profile.goal?.toLowerCase() ?? '';
-  const targetDelta = profile.targetWeightKg - latestWeightKg;
+}
 
-  if (goal.includes('lose')) return Math.max(1400, tdee - 400);
-  if (goal.includes('build muscle') && !goal.includes('lose fat')) return tdee + 250;
-  if (goal.includes('build muscle') && goal.includes('lose fat')) {
-    if (targetDelta > 1) return tdee + 150;
-    if (targetDelta < -1) return Math.max(1400, tdee - 250);
-  }
-  return tdee;
+function targetCalories(profile: UserProfile, latestWeightKg: number) {
+  const tdee = maintenanceCalories(profile, latestWeightKg);
+  return calculateGoalCalorieTarget({
+    maintenanceCalories: tdee,
+    currentWeightKg: latestWeightKg,
+    targetWeightKg: profile.targetWeightKg,
+    targetDate: profile.targetDate,
+    weeklyWeightChangeKg: profile.weeklyWeightChangeKg,
+    goal: goalFromProfile(profile.goal),
+  }).calorieTarget;
 }
 
 function isRestWorkout(label: string) {
@@ -184,47 +190,7 @@ function isRestWorkout(label: string) {
 }
 
 function fallbackExercises(label: string) {
-  const key = label.toLowerCase();
-  if (isRestWorkout(label)) return [];
-  if (key.includes('push')) {
-    return [
-      { name: 'Bench Press', muscleGroup: 'chest', targetSets: 4, reps: 8 },
-      { name: 'Incline Press', muscleGroup: 'chest', targetSets: 3, reps: 10 },
-      { name: 'Shoulder Press', muscleGroup: 'shoulders', targetSets: 3, reps: 8 },
-      { name: 'Triceps Pushdown', muscleGroup: 'triceps', targetSets: 3, reps: 12 },
-    ];
-  }
-  if (key.includes('pull')) {
-    return [
-      { name: 'Lat Pulldown', muscleGroup: 'back', targetSets: 4, reps: 10 },
-      { name: 'Row', muscleGroup: 'back', targetSets: 3, reps: 8 },
-      { name: 'Face Pull', muscleGroup: 'shoulders', targetSets: 3, reps: 12 },
-      { name: 'Biceps Curl', muscleGroup: 'biceps', targetSets: 3, reps: 12 },
-    ];
-  }
-  if (key.includes('leg') || key.includes('lower')) {
-    return [
-      { name: 'Squat', muscleGroup: 'quads', targetSets: 4, reps: 6 },
-      { name: 'Romanian Deadlift', muscleGroup: 'hamstrings', targetSets: 3, reps: 8 },
-      { name: 'Leg Press', muscleGroup: 'quads', targetSets: 3, reps: 10 },
-      { name: 'Calf Raise', muscleGroup: 'calves', targetSets: 4, reps: 14 },
-    ];
-  }
-  if (key.includes('upper')) {
-    return [
-      { name: 'Bench Press', muscleGroup: 'chest', targetSets: 3, reps: 8 },
-      { name: 'Row', muscleGroup: 'back', targetSets: 3, reps: 8 },
-      { name: 'Shoulder Press', muscleGroup: 'shoulders', targetSets: 3, reps: 10 },
-      { name: 'Biceps Curl', muscleGroup: 'biceps', targetSets: 2, reps: 12 },
-      { name: 'Triceps Pushdown', muscleGroup: 'triceps', targetSets: 2, reps: 12 },
-    ];
-  }
-  return [
-    { name: 'Squat', muscleGroup: 'quads', targetSets: 3, reps: 6 },
-    { name: 'Bench Press', muscleGroup: 'chest', targetSets: 3, reps: 8 },
-    { name: 'Row', muscleGroup: 'back', targetSets: 3, reps: 8 },
-    { name: 'Plank', muscleGroup: 'core', targetSets: 3, reps: 45 },
-  ];
+  return exercisesForWorkoutLabel(label);
 }
 
 function buildWeeklyWorkouts(dayPills: string[]): NonNullable<GeneratedPlan['weeklyWorkouts']> {
@@ -282,6 +248,7 @@ export function recalibrateBodyPlan(profile: UserProfile, logs: BodyMetricLog[])
   if (!latest?.weightKg) return null;
 
   const calorieGoal = targetCalories(profile, latest.weightKg);
+  const maintenance = maintenanceCalories(profile, latest.weightKg);
   const macros = calculateMacros(calorieGoal, goalFromProfile(profile.goal));
   const schedule = scheduleForGymDays(profile.gymDaysPerWeek);
   const generatedPlan: GeneratedPlan = {
@@ -293,6 +260,8 @@ export function recalibrateBodyPlan(profile: UserProfile, logs: BodyMetricLog[])
   };
 
   return {
+    maintenanceCalories: maintenance,
+    calorieAdjustment: calorieGoal - maintenance,
     calorieGoal,
     macros,
     generatedPlan,
@@ -304,32 +273,42 @@ export function recalibrateBodyPlan(profile: UserProfile, logs: BodyMetricLog[])
   };
 }
 
-function parseGeneratedBodyPlan(response: string, fallback: BodyRecalibration): BodyRecalibration | null {
+function parseGeneratedBodyPlan(response: string, fallback: BodyRecalibration, fitnessGoal: FitnessGoal): BodyRecalibration | null {
   const jsonText = response.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
   if (!jsonText) return null;
 
   try {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-    const calorieGoal = Math.round(Number(parsed.calorieGoal || parsed.calories || fallback.calorieGoal));
-    const parsedMacros = parsed.macros && typeof parsed.macros === 'object' && !Array.isArray(parsed.macros)
-      ? parsed.macros as Record<string, unknown>
-      : {};
-    const macros = {
-      protein: Math.round(Number(parsedMacros.protein || fallback.macros.protein)),
-      carbs: Math.round(Number(parsedMacros.carbs || fallback.macros.carbs)),
-      fat: Math.round(Number(parsedMacros.fat || fallback.macros.fat)),
-    };
+    const maintenanceValue = parsed.maintenanceCalories || parsed.maintenance_calories || parsed.tdee || 0;
+    const rawMaintenance = Math.round(typeof maintenanceValue === 'string'
+      ? Number(maintenanceValue.replace(/[^\d.]/g, ''))
+      : Number(maintenanceValue));
+    const maintenance = Number.isFinite(rawMaintenance)
+      && rawMaintenance >= fallback.maintenanceCalories * 0.8
+      && rawMaintenance <= fallback.maintenanceCalories * 1.2
+      ? rawMaintenance
+      : fallback.maintenanceCalories;
+    const calorieGoal = Math.max(1200, maintenance + fallback.calorieAdjustment);
+    const macros = calculateMacros(calorieGoal, fitnessGoal);
     const dayPills = Array.isArray(parsed.dayPills)
       ? parsed.dayPills.filter(Boolean).map(String).slice(0, 7)
       : fallback.generatedPlan.dayPills;
     const split = typeof parsed.workoutSplit === 'string' && parsed.workoutSplit.trim()
       ? parsed.workoutSplit.trim()
       : fallback.split;
+    const waterTargetMl = normalizeWaterTargetMl(
+      parsed.waterTargetMl ?? parsed.water_target_ml,
+      null,
+      fallback.generatedPlan.waterTargetMl,
+      false,
+    ) ?? fallback.generatedPlan.waterTargetMl;
 
     if (!Number.isFinite(calorieGoal) || calorieGoal < 1000 || dayPills.length !== 7) return null;
 
     return {
       ...fallback,
+      maintenanceCalories: maintenance,
+      calorieAdjustment: fallback.calorieAdjustment,
       calorieGoal,
       macros,
       split,
@@ -338,6 +317,7 @@ function parseGeneratedBodyPlan(response: string, fallback: BodyRecalibration): 
         workoutSplit: split,
         dayPills,
         weeklyWorkouts: buildWeeklyWorkouts(dayPills),
+        waterTargetMl,
       },
       source: 'ai',
       note: typeof parsed.note === 'string' && parsed.note.trim()
@@ -360,8 +340,10 @@ export async function generateBodyPlan(profile: UserProfile, logs: BodyMetricLog
   const response = await callAI(
     [
       'Generate updated LifeOS nutrition and gym targets from the latest body_metrics log and profile table data.',
-      'Return only JSON with keys calorieGoal, macros { protein, carbs, fat }, workoutSplit, dayPills as exactly 7 labels, and note.',
+      'Return only JSON with keys maintenanceCalories, calorieGoal, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills as exactly 7 labels, and note.',
       'Use the latest weight log as the current body weight. Keep values realistic and metric.',
+      'maintenanceCalories estimates calories required to maintain current weight. calorieGoal adds the selected weekly-pace surplus or subtracts its deficit.',
+      'waterTargetMl must be required daily millilitres based on current weight and profile. Do not return a glass count; the app divides millilitres into 250ml glasses.',
       'Do not include markdown.',
     ].join(' '),
     {
@@ -370,8 +352,12 @@ export async function generateBodyPlan(profile: UserProfile, logs: BodyMetricLog
       recentBodyMetrics: logs.slice(0, 14),
       fallbackPlan: fallback,
     },
-    { allowOpenAI: true, allowLocalAI: true, responseFormat: 'json_object' },
+    { purpose: 'body_recalibration', allowOpenAI: true, allowLocalAI: false, responseFormat: 'json_object' },
   );
 
-  return parseGeneratedBodyPlan(response, fallback) ?? fallback;
+  if (!response.trim()) throw new Error('AI target generation is unavailable. Your current profile targets were not changed.');
+
+  const generated = parseGeneratedBodyPlan(response, fallback, goalFromProfile(profile.goal));
+  if (!generated) throw new Error('AI returned an invalid target plan. Your current profile targets were not changed.');
+  return generated;
 }

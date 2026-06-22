@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { supabase } from '@/lib/supabase';
+import { resolveServingNutrition } from '@/lib/nutritionFood';
 import { useUserStore } from '@/stores/useUserStore';
 import type { Json } from '@/types/database';
 
@@ -102,6 +103,10 @@ function asText(value: Json | undefined, fallback = '') {
 }
 
 function asNumber(value: Json | undefined, fallback = 0) {
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
@@ -176,10 +181,7 @@ function dbFoodId(foodId?: string) {
 
 function foodFromRow(row: LooseRow): FoodItem {
   const fallback = fallbackForFoodName(asText(row.name));
-  const calories = numberFromColumns(row, ['calories', 'kcal', 'calorie', 'energy_kcal', 'calories_per_serving', 'kcal_per_serving', 'calories_per_100g']);
-  const protein = numberFromColumns(row, ['protein', 'protein_g', 'protein_per_serving', 'protein_per_100g']);
-  const carbs = numberFromColumns(row, ['carbs', 'carbs_g', 'carbohydrates', 'carbohydrate_g', 'carbs_per_serving', 'carbs_per_100g']);
-  const fat = numberFromColumns(row, ['fat', 'fat_g', 'fat_per_serving', 'fat_per_100g']);
+  const { calories, protein, carbs, fat } = resolveServingNutrition(row);
 
   return {
     id: rowId(row, `food-${Date.now()}`),
@@ -195,16 +197,17 @@ function foodFromRow(row: LooseRow): FoodItem {
 function itemFromRows(item: LooseRow, food?: LooseRow): MealLogItem {
   const qty = asNumber(item.qty) || asNumber(item.quantity, 1);
   const source = food ?? item;
+  const sourceFood = foodFromRow(source);
   return {
     id: rowId(item, `item-${Date.now()}`),
     foodId: typeof item.food_item_id === 'string' ? item.food_item_id : rowId(source, ''),
     name: asText(item.name) || asText(source.name, 'Food item'),
     qty,
     serving: asText(item.serving) || asText(source.serving) || asText(source.unit) || 'serving',
-    calories: asNumber(item.calories) || Math.round((asNumber(source.calories) || asNumber(source.kcal)) * qty),
-    protein: asNumber(item.protein) || Math.round(((asNumber(source.protein) || asNumber(source.protein_g)) * qty) * 10) / 10,
-    carbs: asNumber(item.carbs) || Math.round(((asNumber(source.carbs) || asNumber(source.carbs_g)) * qty) * 10) / 10,
-    fat: asNumber(item.fat) || Math.round(((asNumber(source.fat) || asNumber(source.fat_g)) * qty) * 10) / 10,
+    calories: asNumber(item.calories) || Math.round(sourceFood.calories * qty),
+    protein: asNumber(item.protein) || Math.round(sourceFood.protein * qty * 10) / 10,
+    carbs: asNumber(item.carbs) || Math.round(sourceFood.carbs * qty * 10) / 10,
+    fat: asNumber(item.fat) || Math.round(sourceFood.fat * qty * 10) / 10,
   };
 }
 
@@ -222,10 +225,10 @@ function mealFromLog(log: LooseRow, index: number): Meal {
     name: asText(log.name) || titleMeal(type),
     type,
     time: asText(log.time) || asText(log.logged_at).slice(11, 16) || asText(log.created_at).slice(11, 16) || '--:--',
-    calories: items.reduce((total, item) => total + item.calories, asNumber(log.calories)),
-    protein: items.reduce((total, item) => total + item.protein, asNumber(log.protein)),
-    carbs: items.reduce((total, item) => total + item.carbs, asNumber(log.carbs)),
-    fat: items.reduce((total, item) => total + item.fat, asNumber(log.fat)),
+    calories: items.length ? items.reduce((total, item) => total + item.calories, 0) : asNumber(log.calories),
+    protein: items.length ? items.reduce((total, item) => total + item.protein, 0) : asNumber(log.protein),
+    carbs: items.length ? items.reduce((total, item) => total + item.carbs, 0) : asNumber(log.carbs),
+    fat: items.length ? items.reduce((total, item) => total + item.fat, 0) : asNumber(log.fat),
     items,
   };
 }
@@ -242,10 +245,10 @@ function templateFromRow(row: LooseRow, index: number): MealTemplate {
     id: rowId(row, `template-${index}`),
     name: asText(row.name, 'Meal template'),
     mealType: asMealType(row.meal_type ?? row.type),
-    calories: items.reduce((total, item) => total + item.calories, asNumber(row.calories)),
-    protein: items.reduce((total, item) => total + item.protein, asNumber(row.protein)),
-    carbs: items.reduce((total, item) => total + item.carbs, asNumber(row.carbs)),
-    fat: items.reduce((total, item) => total + item.fat, asNumber(row.fat)),
+    calories: items.length ? items.reduce((total, item) => total + item.calories, 0) : asNumber(row.calories),
+    protein: items.length ? items.reduce((total, item) => total + item.protein, 0) : asNumber(row.protein),
+    carbs: items.length ? items.reduce((total, item) => total + item.carbs, 0) : asNumber(row.carbs),
+    fat: items.length ? items.reduce((total, item) => total + item.fat, 0) : asNumber(row.fat),
     items,
   };
 }

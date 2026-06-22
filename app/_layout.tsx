@@ -12,6 +12,7 @@ import {
   registerLifeOSBackgroundTasks,
   registerNotificationReceivedHandler,
   registerNotificationResponseHandler,
+  scheduleLifeOSNotifications,
 } from '@/lib/notifications';
 import { profileFromRow } from '@/lib/profile';
 import { hydrateAccountSettings } from '@/lib/settingsService';
@@ -184,6 +185,13 @@ function RootLayoutNav() {
   useEffect(() => {
     void registerLifeOSBackgroundTasks();
   }, []);
+
+  useEffect(() => {
+    if (!isReady) return;
+    // Reconcile persisted schedules after account settings have been hydrated,
+    // without prompting for permission during app startup.
+    void scheduleLifeOSNotifications({ requestPermission: false });
+  }, [isReady, currentUserId]);
 
   useEffect(() => {
     if (!appLockEnabled || Platform.OS === 'web') {

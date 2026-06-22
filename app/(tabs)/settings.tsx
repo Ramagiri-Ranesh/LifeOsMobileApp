@@ -75,6 +75,7 @@ export default function SettingsScreen() {
   const [backupJson, setBackupJson] = useState('');
   const [saving, setSaving] = useState(false);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const syncSettings = useCallback(() => {
     if (!currentUserId) return;
@@ -94,12 +95,33 @@ export default function SettingsScreen() {
     return syncCurrentSettings(currentUserId);
   }, [currentUserId]);
 
+  const reconcileNotificationSchedules = useCallback((showPermissionFailure = false) => {
+    if (scheduleTimerRef.current) clearTimeout(scheduleTimerRef.current);
+    scheduleTimerRef.current = setTimeout(() => {
+      scheduleTimerRef.current = null;
+      void scheduleLifeOSNotifications()
+        .then((scheduled) => {
+          if (!scheduled && showPermissionFailure) {
+            Alert.alert('Permission needed', 'Enable notifications for LifeOS in device settings so this reminder can appear.');
+          }
+        })
+        .catch((error) => {
+          console.warn('Unable to refresh notification schedules', error);
+        });
+    }, SETTINGS_SYNC_DEBOUNCE_MS);
+  }, []);
+
   useEffect(
     () => () => {
-      if (!syncTimerRef.current) return;
-      clearTimeout(syncTimerRef.current);
-      syncTimerRef.current = null;
-      if (currentUserId) void syncCurrentSettings(currentUserId);
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+        if (currentUserId) void syncCurrentSettings(currentUserId);
+      }
+      if (scheduleTimerRef.current) {
+        clearTimeout(scheduleTimerRef.current);
+        scheduleTimerRef.current = null;
+      }
     },
     [currentUserId],
   );
@@ -108,6 +130,7 @@ export default function SettingsScreen() {
     hapticLight();
     setNotificationEnabled(type, enabled);
     syncSettings();
+    reconcileNotificationSchedules(enabled);
   };
 
   const updateAIModel = (model: AIModel) => {
@@ -279,7 +302,10 @@ export default function SettingsScreen() {
               <TextInput
                 value={notificationTimes[row.key]}
                 onChangeText={(value) => setNotificationTime(row.key, value)}
-                onBlur={syncSettings}
+                onBlur={() => {
+                  syncSettings();
+                  if (validTime(notificationTimes[row.key])) reconcileNotificationSchedules();
+                }}
                 keyboardType="numbers-and-punctuation"
                 placeholder="HH:mm"
                 placeholderTextColor={colors.textMuted}
@@ -305,6 +331,7 @@ export default function SettingsScreen() {
               onValueChange={(value) => {
                 setQuietHours({ enabled: value });
                 syncSettings();
+                reconcileNotificationSchedules();
               }}
               thumbColor={quietHours.enabled ? colors.violetLight : colors.textMuted}
               trackColor={{ false: colors.surface3, true: colors.violetBg }}
@@ -314,7 +341,10 @@ export default function SettingsScreen() {
             <TextInput
               value={quietHours.start}
               onChangeText={(value) => setQuietHours({ start: value })}
-              onBlur={syncSettings}
+              onBlur={() => {
+                syncSettings();
+                if (validTime(quietHours.start)) reconcileNotificationSchedules();
+              }}
               style={[styles.timeInput, quietHours.enabled && !validTime(quietHours.start) && styles.inputError]}
               placeholder="22:30"
               placeholderTextColor={colors.textMuted}
@@ -322,7 +352,10 @@ export default function SettingsScreen() {
             <TextInput
               value={quietHours.end}
               onChangeText={(value) => setQuietHours({ end: value })}
-              onBlur={syncSettings}
+              onBlur={() => {
+                syncSettings();
+                if (validTime(quietHours.end)) reconcileNotificationSchedules();
+              }}
               style={[styles.timeInput, quietHours.enabled && !validTime(quietHours.end) && styles.inputError]}
               placeholder="06:30"
               placeholderTextColor={colors.textMuted}

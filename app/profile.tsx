@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LifeOSCard } from '@/components/ui/LifeOSCard';
+import { suggestedTargetDate } from '@/lib/calculations';
 import { profileFromRow } from '@/lib/profile';
 import { radii, spacing, typography, useLifeOSColors, type ColorPalette } from '@/lib/design';
 import { supabase } from '@/lib/supabase';
@@ -30,6 +31,7 @@ type ProfileForm = {
   heightCm: string;
   weightKg: string;
   targetWeightKg: string;
+  weeklyWeightChangeKg: string;
   gymDaysPerWeek: string;
   waterTargetMl: string;
   goal: string;
@@ -46,6 +48,7 @@ function formFromProfile(profile: UserProfile | null): ProfileForm {
     heightCm: `${profile?.heightCm ?? 175}`,
     weightKg: `${profile?.weightKg ?? 75}`,
     targetWeightKg: `${profile?.targetWeightKg ?? 72}`,
+    weeklyWeightChangeKg: `${profile?.weeklyWeightChangeKg ?? 0.5}`,
     gymDaysPerWeek: `${profile?.gymDaysPerWeek ?? 4}`,
     waterTargetMl: `${profile?.waterTargetMl ?? 3000}`,
     goal: profile?.goal ?? 'Build muscle & lose fat',
@@ -127,14 +130,19 @@ export default function ProfileScreen() {
       return;
     }
 
+    const nextWeightKg = parseNumber(form.weightKg, profile.weightKg);
+    const nextTargetWeightKg = parseNumber(form.targetWeightKg, profile.targetWeightKg);
+    const nextWeeklyWeightChangeKg = Math.max(0, Math.min(1, parseNumber(form.weeklyWeightChangeKg, profile.weeklyWeightChangeKg ?? 0.5)));
     const nextProfile: UserProfile = {
       ...profile,
       name,
       gender: form.gender,
       age: Math.round(parseNumber(form.age, profile.age)),
       heightCm: Math.round(parseNumber(form.heightCm, profile.heightCm)),
-      weightKg: parseNumber(form.weightKg, profile.weightKg),
-      targetWeightKg: parseNumber(form.targetWeightKg, profile.targetWeightKg),
+      weightKg: nextWeightKg,
+      targetWeightKg: nextTargetWeightKg,
+      weeklyWeightChangeKg: nextWeeklyWeightChangeKg,
+      targetDate: suggestedTargetDate(nextWeightKg, nextTargetWeightKg, new Date(), nextWeeklyWeightChangeKg),
       gymDaysPerWeek: Math.min(7, Math.max(1, Math.round(parseNumber(form.gymDaysPerWeek, profile.gymDaysPerWeek)))),
       waterTargetMl: Math.max(500, Math.round(parseNumber(form.waterTargetMl, profile.waterTargetMl))),
       goal: form.goal.trim(),
@@ -153,6 +161,8 @@ export default function ProfileScreen() {
         height_cm: nextProfile.heightCm,
         weight_kg: nextProfile.weightKg,
         target_weight_kg: nextProfile.targetWeightKg,
+        target_date: nextProfile.targetDate || null,
+        weekly_weight_change_kg: nextProfile.weeklyWeightChangeKg,
         gym_days_per_week: nextProfile.gymDaysPerWeek,
         water_target_ml: nextProfile.waterTargetMl,
         daily_water_goal_ml: nextProfile.waterTargetMl,
@@ -184,6 +194,8 @@ export default function ProfileScreen() {
       gymDaysPerWeek: parsed.profile.gymDaysPerWeek,
       currentWeight: parsed.profile.weightKg,
       targetWeight: parsed.profile.targetWeightKg,
+      targetDate: parsed.profile.targetDate || nextProfile.targetDate || '',
+      weeklyWeightChangeKg: parsed.profile.weeklyWeightChangeKg ?? nextWeeklyWeightChangeKg,
       goal: parsed.profile.goal ?? form.goal,
       experienceLevel: parsed.profile.experienceLevel ?? form.experienceLevel,
       firstMealTime: parsed.profile.firstMealTime ?? form.firstMealTime,
@@ -252,6 +264,20 @@ export default function ProfileScreen() {
             <View style={styles.grid}>
               <Field label="Age" value={form.age} editable={editing} keyboardType="numeric" onChangeText={(age) => updateForm({ age })} />
               <Field label="Height cm" value={form.heightCm} editable={editing} keyboardType="numeric" onChangeText={(heightCm) => updateForm({ heightCm })} />
+            </View>
+            <View style={styles.grid}>
+              <Field label="Weekly kg (0-1)" value={form.weeklyWeightChangeKg} editable={editing} keyboardType="numbers-and-punctuation" onChangeText={(weeklyWeightChangeKg) => updateForm({ weeklyWeightChangeKg })} />
+              <Field
+                label="Estimated target date"
+                value={suggestedTargetDate(
+                  parseNumber(form.weightKg, profile?.weightKg ?? 75),
+                  parseNumber(form.targetWeightKg, profile?.targetWeightKg ?? 72),
+                  new Date(),
+                  Math.max(0, Math.min(1, parseNumber(form.weeklyWeightChangeKg, 0.5))),
+                ) || 'Maintenance'}
+                editable={false}
+                onChangeText={() => undefined}
+              />
             </View>
           </LifeOSCard>
 

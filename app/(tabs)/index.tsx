@@ -24,8 +24,7 @@ import { BodyProgressModal } from '@/components/body/BodyProgressModal';
 import { LifeOSCard } from '@/components/ui/LifeOSCard';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { TimelineItem } from '@/components/ui/TimelineItem';
-import { getDailyBrief } from '@/lib/ai';
-import { canRecalibrateBodyPlan, loadBodyMetrics, type BodyMetricLog } from '@/lib/bodyMetrics';
+import { loadBodyMetrics, type BodyMetricLog } from '@/lib/bodyMetrics';
 import { domainsForColors, radii, spacing, typography, useLifeOSColors, type ColorPalette, type Domain } from '@/lib/design';
 import { calculateDailyLifeScore, persistDailyLifeScore } from '@/lib/lifeScore';
 import { hapticLight } from '@/lib/haptics';
@@ -423,9 +422,6 @@ export default function DailyHubScreen() {
     const loadedLatestWeight = loadedBodyLogs
       .filter((log) => typeof log.weightKg === 'number' && log.weightKg > 0)
       .sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
-    const loadedLatestMetrics = loadedBodyLogs.find((log) => log.waistCm || log.chestCm || log.armCm || log.hipCm || log.thighCm) ?? null;
-    const loadedGenerationReady = canRecalibrateBodyPlan(profile.lastBodyRecalibrationAt) && Boolean(loadedLatestWeight);
-
     setTasks(todayTasks);
     setWaterCount(nextWater);
     setWaterMl(nextWater * WATER_GLASS_ML);
@@ -433,28 +429,7 @@ export default function DailyHubScreen() {
     const { error: scoreError } = await persistDailyLifeScore(currentUserId, date, scoreResult);
     if (scoreError) console.warn('Unable to persist life score', scoreError.message);
 
-    try {
-      const insight = await getDailyBrief({
-        date,
-        timeOfDay: dayPeriod.greeting,
-        lifeScore: score,
-        caloriesRemaining,
-        waterGlasses: nextWater,
-        tasks: todayTasks.map((task) => ({ title: taskTitle(task), done: isTaskDone(task) })),
-        meals: todaysMeals,
-        workout: { activeSets: activeSession.length, split: todaysWorkout.splitName, today: todaysWorkout.name },
-        bodyProgress: {
-          latestWeightKg: loadedLatestWeight?.weightKg,
-          latestWeightDate: loadedLatestWeight?.date,
-          latestMetricsDate: loadedLatestMetrics?.date,
-          twoWeekGenerationReady: loadedGenerationReady,
-        },
-      });
-      setBrief(insight.trim().split('\n')[0] || fallbackBrief(score, caloriesRemaining, nextTaskProgress));
-    } catch (error) {
-      console.warn('Unable to load daily brief', error);
-      setBrief(fallbackBrief(score, caloriesRemaining, nextTaskProgress));
-    }
+    setBrief(fallbackBrief(score, caloriesRemaining, nextTaskProgress));
   }, [
     activeSession.length,
     calorieGoal,
