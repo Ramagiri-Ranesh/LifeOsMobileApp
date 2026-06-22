@@ -1,5 +1,5 @@
 import type { GeneratedPlan, UserProfile } from '@/stores/useUserStore';
-import { exercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
+import { limitExercisesPerMuscle, recommendedExercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
 
 export type PlannedWorkoutExercise = {
   id: string;
@@ -53,7 +53,7 @@ export function normalizeMuscleName(value: string) {
   if (key.includes('quad') || key.includes('squat') || key.includes('leg press')) return 'quads';
   if (key.includes('hamstring') || key.includes('deadlift') || key.includes('hinge')) return 'hamstrings';
   if (key.includes('glute')) return 'glutes';
-  if (key.includes('calf')) return 'calves';
+  if (key.includes('calf') || key.includes('calv')) return 'calves';
   if (key.includes('core') || key.includes('abs') || key.includes('plank')) return 'core';
   if (key.includes('chest') || key.includes('bench') || key.includes('incline') || key.includes('fly')) return 'chest';
   return 'chest';
@@ -74,7 +74,7 @@ function fallbackDayPills(gymDaysPerWeek = 4) {
 }
 
 function fallbackExercises(label: string): Array<Omit<PlannedWorkoutExercise, 'id' | 'lastWeekKg' | 'previousWeightKg'>> {
-  return exercisesForWorkoutLabel(label).map((item) => ({
+  return recommendedExercisesForWorkoutLabel(label).map((item) => ({
     name: item.name,
     muscleGroup: item.muscleGroup,
     targetSets: item.targetSets,
@@ -86,18 +86,21 @@ function plannedExercises(
   label: string,
   exercises?: NonNullable<GeneratedPlan['weeklyWorkouts']>[number]['exercises'],
 ) {
-  const catalogExercises = fallbackExercises(label);
-  const source = catalogExercises.length > 0
-    ? catalogExercises.map((exercise) => ({ ...exercise, weightKg: 0 }))
-    : exercises && exercises.length > 0
-    ? exercises.map((exercise) => ({
+  const planned = exercises && exercises.length > 0
+    ? limitExercisesPerMuscle(exercises.map((exercise) => ({
         name: exercise.name,
-        muscleGroup: exercise.muscleGroup || normalizeMuscleName(exercise.name),
+        muscleGroup: normalizeMuscleName(exercise.muscleGroup || exercise.name),
         targetSets: exercise.targetSets || 3,
-        previousReps: exercise.reps || 8,
+        reps: exercise.reps || 8,
         weightKg: exercise.weightKg || 0,
+      }))).map((exercise) => ({
+        ...exercise,
+        previousReps: exercise.reps,
       }))
     : [];
+  const source = planned.length > 0
+    ? planned
+    : fallbackExercises(label).map((exercise) => ({ ...exercise, weightKg: 0 }));
 
   return source.map((exercise, index) => ({
     id: `${slug(label)}-${slug(exercise.name)}-${index}`,

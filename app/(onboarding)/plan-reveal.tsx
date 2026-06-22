@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { calculateGoalCalorieTarget, calculateHydrationTarget, calculateMacros, calculateTDEE, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
 import { colors, radii, spacing, typography } from '@/lib/design';
-import { exercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
+import { recommendedExercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
 import { useUserStore, type GeneratedPlan, type UserProfile } from '@/stores/useUserStore';
 
 const defaultBullets = [
@@ -301,7 +301,7 @@ function isRestWorkout(label: string) {
 }
 
 function fallbackExercises(label: string) {
-  return exercisesForWorkoutLabel(label);
+  return recommendedExercisesForWorkoutLabel(label);
 }
 
 function buildFallbackWeeklyWorkouts(dayPills: string[]): NonNullable<GeneratedPlan['weeklyWorkouts']> {

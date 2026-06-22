@@ -6,7 +6,6 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -127,6 +126,16 @@ function inferMessageType(text: string): CoachMessageType {
   return 'text';
 }
 
+function cleanCoachText(text: string) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '• ')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function Dot({ delay }: { delay: number }) {
   const { styles } = useAITheme();
   const opacity = useRef(new Animated.Value(0.35)).current;
@@ -162,15 +171,25 @@ function TypingIndicator() {
 
 function MessageCard({ message, onAddMeal }: { message: CoachMessage; onAddMeal: (message: CoachMessage) => void }) {
   const { colors, styles } = useAITheme();
+  const [expanded, setExpanded] = useState(false);
   const isUser = message.role === 'user';
+  const displayText = isUser ? message.text : cleanCoachText(message.text);
+  const canAddMeal = message.type === 'meal-suggestion' && typeof message.payload?.foodName === 'string';
+  const isLongResponse = displayText.length > 360 || displayText.split('\n').length > 7;
   const icon =
-    message.type === 'meal-suggestion' ? 'restaurant-outline' : message.type === 'workout-tip' ? 'barbell-outline' : 'flag-outline';
+    message.type === 'meal-suggestion'
+      ? 'restaurant-outline'
+      : message.type === 'workout-tip'
+        ? 'barbell-outline'
+        : message.type === 'goal-recommendation'
+          ? 'flag-outline'
+          : 'chatbubble-ellipses-outline';
 
-  if (isUser || message.type === 'text') {
+  if (isUser) {
     return (
       <View style={[styles.messageRow, isUser ? styles.userRow : styles.aiRow]}>
         <View style={[styles.bubble, isUser ? styles.userBubble : styles.aiBubble]}>
-          <Text style={[styles.messageText, isUser ? styles.userText : styles.aiText]}>{message.text}</Text>
+          <Text style={[styles.messageText, isUser ? styles.userText : styles.aiText]}>{displayText}</Text>
         </View>
       </View>
     );
@@ -178,24 +197,36 @@ function MessageCard({ message, onAddMeal }: { message: CoachMessage; onAddMeal:
 
   return (
     <View style={[styles.messageRow, styles.aiRow]}>
-      <Pressable
-        style={[styles.bubble, styles.aiBubble, styles.richCard]}
-        onPress={message.type === 'meal-suggestion' ? () => onAddMeal(message) : undefined}>
+      <View style={[styles.bubble, styles.aiBubble, styles.richCard]}>
         <View style={styles.richHeader}>
           <View style={styles.richIcon}>
             <Ionicons name={icon} size={16} color={colors.violetLight} />
           </View>
           <Text style={styles.richTitle}>
             {message.type === 'meal-suggestion'
-              ? 'Meal suggestion'
+              ? 'Nutrition guidance'
               : message.type === 'workout-tip'
                 ? 'Workout tip'
-                : 'Goal recommendation'}
+                : message.type === 'goal-recommendation'
+                  ? 'Goal recommendation'
+                  : 'Coach answer'}
           </Text>
-          {message.type === 'meal-suggestion' ? <Ionicons name="add-circle-outline" size={18} color={colors.emeraldLight} /> : null}
+          {canAddMeal ? (
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add suggested meal" onPress={() => onAddMeal(message)}>
+              <Ionicons name="add-circle-outline" size={20} color={colors.emeraldLight} />
+            </TouchableOpacity>
+          ) : null}
         </View>
-        <Text style={styles.aiText}>{message.text}</Text>
-      </Pressable>
+        <Text style={[styles.messageText, styles.aiText]} numberOfLines={expanded ? undefined : 8}>
+          {displayText}
+        </Text>
+        {isLongResponse ? (
+          <TouchableOpacity accessibilityRole="button" onPress={() => setExpanded((current) => !current)} style={styles.expandButton}>
+            <Text style={styles.expandText}>{expanded ? 'Show less' : 'Read full answer'}</Text>
+            <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.violetLight} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -283,6 +314,13 @@ function buildStreakWin(gymStreak: number) {
   return 'Fresh training window today. One focused session is enough to start the next run.';
 }
 
+function buildCorrelationInsight(context: CoachContext) {
+  if (context.recentWorkouts.length < 2 || context.recentLifeScores.length < 3) {
+    return 'Not enough matched workout and Life Score data yet. Keep logging to unlock this insight.';
+  }
+  return 'Workout and Life Score history is available. Ask the coach to review a specific date range.';
+}
+
 function isToday(isoDate: string) {
   const date = new Date(isoDate);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
@@ -307,7 +345,7 @@ export default function AICoachScreen() {
     {
       id: 'correlation',
       title: 'Correlation',
-      text: "You're 40% more focused on gym days. Keep workouts near high-focus tasks.",
+      text: 'Keep logging workouts and Life Scores to unlock a reliable correlation.',
       accent: colors.amber,
       background: colors.amberBg,
       icon: 'analytics-outline',
@@ -315,7 +353,7 @@ export default function AICoachScreen() {
     {
       id: 'protein',
       title: 'Nutrient alert',
-      text: 'Protein 40g below target 3 days running. Add one dense protein meal.',
+      text: buildNutrientAlert(todaysMeals, macros.protein, []),
       accent: colors.rose,
       background: colors.roseBg,
       icon: 'warning-outline',
@@ -323,7 +361,7 @@ export default function AICoachScreen() {
     {
       id: 'streak',
       title: 'Streak win',
-      text: 'Your gym streak is building. One focused session today locks the milestone.',
+      text: buildStreakWin(gymStreak),
       accent: colors.emerald,
       background: colors.emeraldBg,
       icon: 'sparkles-outline',
@@ -356,7 +394,7 @@ export default function AICoachScreen() {
       const nextContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, gymStreak, currentUserId);
       if (cancelled) return;
 
-      const pattern = "You're 40% more focused on gym days. Keep workouts near high-focus tasks.";
+      const pattern = buildCorrelationInsight(nextContext);
 
       if (!cancelled) {
         setInsights([
@@ -421,7 +459,14 @@ export default function AICoachScreen() {
 
     try {
       const freshContext = await loadRecentContext(todaysMeals, activeSession, currentSplit, weeklyGoals, gymStreak, currentUserId);
-      const response = await callAI(trimmed, {
+      const coachPrompt = [
+        trimmed,
+        'Answer in at most 120 words using short paragraphs or no more than 4 concise bullets.',
+        'Use plain text only. Do not use markdown symbols.',
+        'Never invent logged data, percentages, or measurements.',
+        'Never recommend any food listed in foodsToAvoid or foodsAvoided in the supplied context.',
+      ].join('\n');
+      const response = await callAI(coachPrompt, {
         ...freshContext,
         last7DaysMeals: freshContext.recentMeals,
         last5Workouts: freshContext.recentWorkouts,
@@ -471,7 +516,8 @@ export default function AICoachScreen() {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}>
-          <TouchableOpacity
+          <View style={styles.headerMain}>
+            <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel="Close AI Coach"
             onPress={() => {
@@ -481,16 +527,20 @@ export default function AICoachScreen() {
                 router.replace('/(tabs)' as never);
               }
             }}
-            style={styles.backButton}>
-            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
-          </TouchableOpacity>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>AI Coach</Text>
-            <Text style={styles.lastInsight}>{Math.min(dailyCoachQuestions, 2)} of 2 questions used today</Text>
+              style={styles.backButton}>
+              <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+            </TouchableOpacity>
+            <Text style={styles.title} numberOfLines={1}>AI Coach</Text>
+            <View style={styles.modelBadge}>
+              <Ionicons name="hardware-chip-outline" size={14} color={colors.violetLight} />
+              <Text style={styles.modelText} numberOfLines={1}>{getActiveAIModelLabel()}</Text>
+            </View>
           </View>
-          <View style={styles.modelBadge}>
-            <Ionicons name="hardware-chip-outline" size={14} color={colors.violetLight} />
-            <Text style={styles.modelText}>{getActiveAIModelLabel()}</Text>
+          <View style={styles.usageRow}>
+            <Ionicons name="chatbubble-ellipses-outline" size={14} color={dailyLimitReached ? colors.rose : colors.textSecondary} />
+            <Text style={[styles.usageText, dailyLimitReached && { color: colors.rose }]}>
+              {dailyLimitReached ? 'Daily limit reached · resets at 00:00 UTC' : `${dailyCoachQuestions}/2 questions used today`}
+            </Text>
           </View>
         </View>
 
@@ -507,7 +557,7 @@ export default function AICoachScreen() {
                 <Ionicons name={insight.icon} size={17} color={insight.accent} />
                 <Text style={[styles.insightTitle, { color: insight.accent }]}>{insight.title}</Text>
               </View>
-              <Text style={styles.insightText} numberOfLines={4}>
+              <Text style={styles.insightText} numberOfLines={3}>
                 {insight.text}
               </Text>
             </View>
@@ -592,17 +642,14 @@ function createStyles(colors: ColorPalette) {
     backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
     paddingHorizontal: spacing.gutter,
     paddingTop: spacing.xs,
     paddingBottom: spacing.sm,
   },
-  headerText: {
-    flex: 1,
-    minWidth: 0,
+  headerMain: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   backButton: {
     alignItems: 'center',
@@ -617,15 +664,12 @@ function createStyles(colors: ColorPalette) {
   title: {
     ...typography.h1,
     color: colors.textPrimary,
-  },
-  lastInsight: {
-    ...typography.body,
-    color: colors.textMuted,
-    marginTop: 2,
+    flex: 1,
+    minWidth: 0,
   },
   modelBadge: {
     minHeight: 32,
-    maxWidth: '48%',
+    maxWidth: '46%',
     flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -641,6 +685,17 @@ function createStyles(colors: ColorPalette) {
     flexShrink: 1,
     color: colors.violetLight,
   },
+  usageRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    marginLeft: 44,
+    marginTop: 5,
+  },
+  usageText: {
+    ...typography.labelCaps,
+    color: colors.textSecondary,
+  },
   insightScroll: {
     flexGrow: 0,
     maxWidth: '100%',
@@ -652,7 +707,7 @@ function createStyles(colors: ColorPalette) {
     paddingBottom: spacing.sm,
   },
   insightCard: {
-    minHeight: 126,
+    height: 138,
     flexShrink: 0,
     borderWidth: 1,
     borderRadius: 8,
@@ -671,6 +726,7 @@ function createStyles(colors: ColorPalette) {
   insightText: {
     ...typography.body,
     color: colors.textPrimary,
+    lineHeight: 21,
   },
   chatContent: {
     flexGrow: 1,
@@ -696,6 +752,7 @@ function createStyles(colors: ColorPalette) {
     paddingVertical: 11,
   },
   aiBubble: {
+    maxWidth: '92%',
     backgroundColor: colors.surface2,
     borderLeftWidth: 2,
     borderLeftColor: colors.violet,
@@ -706,6 +763,7 @@ function createStyles(colors: ColorPalette) {
   },
   messageText: {
     ...typography.body,
+    lineHeight: 22,
   },
   aiText: {
     color: colors.textPrimary,
@@ -736,6 +794,17 @@ function createStyles(colors: ColorPalette) {
     flex: 1,
     color: colors.violetLight,
     textTransform: 'uppercase',
+  },
+  expandButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: 4,
+    paddingVertical: 4,
+  },
+  expandText: {
+    ...typography.labelCaps,
+    color: colors.violetLight,
   },
   typingBubble: {
     flexDirection: 'row',

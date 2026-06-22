@@ -59,7 +59,7 @@ describe('workout plan', () => {
     expect(today.isRestDay).toBe(true);
   });
 
-  it('uses the requested full Push and Pull exercise catalogues', () => {
+  it('keeps the full catalogue out of the active workout and limits each muscle prescription', () => {
     const plan: GeneratedPlan = {
       workoutSplit: 'Push Pull Legs',
       dayPills: ['Push', 'Pull', 'Legs', 'Upper', 'Lower', 'Rest', 'Recovery'],
@@ -67,14 +67,42 @@ describe('workout plan', () => {
       waterTargetMl: 2250,
     };
     const templates = buildWorkoutTemplates(plan, profile);
-    expect(templates[0].exercises).toHaveLength(15);
-    expect(templates[0].exercises.map((item) => item.name)).toContain('Close-Grip Bench Press');
-    expect(templates[1].exercises).toHaveLength(15);
-    expect(templates[1].exercises.map((item) => item.name)).toEqual(expect.arrayContaining([
-      'Assisted Pull-Up', 'Chest Supported Row', 'Rear Delt Fly Machine', 'Hammer Curl',
-    ]));
-    expect(templates[2].exercises).toHaveLength(15);
-    expect(templates[3].exercises).toHaveLength(15);
-    expect(templates[4].exercises).toHaveLength(15);
+    expect(templates[0].exercises).toHaveLength(7);
+    expect(templates[0].exercises.filter((item) => item.muscleGroup === 'chest')).toHaveLength(3);
+    expect(templates[0].exercises.filter((item) => item.muscleGroup === 'shoulders')).toHaveLength(2);
+    expect(templates[0].exercises.filter((item) => item.muscleGroup === 'triceps')).toHaveLength(2);
+    expect(templates[1].exercises.filter((item) => item.muscleGroup === 'back')).toHaveLength(3);
+    expect(templates[1].exercises.filter((item) => item.muscleGroup === 'biceps')).toHaveLength(2);
+    expect(templates[2].exercises.filter((item) => item.muscleGroup === 'quads')).toHaveLength(3);
+    expect(templates[2].exercises.filter((item) => item.muscleGroup === 'calves')).toHaveLength(2);
+  });
+
+  it('also trims previously saved plans that contain every catalogue option', () => {
+    const chestExercises = [
+      'Barbell Bench Press',
+      'Dumbbell Bench Press',
+      'Machine Chest Press',
+      'Incline Dumbbell Press',
+      'Pec Deck Fly',
+    ].map((name) => ({ name, muscleGroup: 'chest', targetSets: 3, reps: 10 }));
+    const plan: GeneratedPlan = {
+      workoutSplit: 'Push Pull Legs',
+      dayPills: ['Push', 'Rest', 'Rest', 'Rest', 'Rest', 'Rest', 'Recovery'],
+      weeklyWorkouts: [{
+        dayIndex: 0,
+        label: 'Push',
+        templateName: 'Push Workout',
+        muscleGroups: ['chest'],
+        exercises: chestExercises,
+      }],
+      firstWeekGoals: [],
+      waterTargetMl: 2250,
+    };
+
+    expect(buildWorkoutTemplates(plan, profile)[0].exercises.map((item) => item.name)).toEqual([
+      'Barbell Bench Press',
+      'Dumbbell Bench Press',
+      'Machine Chest Press',
+    ]);
   });
 });

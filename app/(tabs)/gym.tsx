@@ -150,7 +150,7 @@ function normalizeMuscle(value: string): MuscleGroup | null {
   if (key.includes('quad') || key.includes('squat')) return 'quads';
   if (key.includes('hamstring') || key.includes('deadlift')) return 'hamstrings';
   if (key.includes('glute')) return 'glutes';
-  if (key.includes('calf')) return 'calves';
+  if (key.includes('calf') || key.includes('calv')) return 'calves';
   if (key.includes('core') || key.includes('abs') || key.includes('plank')) return 'core';
   return null;
 }

@@ -395,10 +395,11 @@ export default function DailyHubScreen() {
       ((waterRows ?? []) as LooseRow[]).reduce((total, row) => total + waterGlasses(row), 0),
     );
     const nextWater = glasses;
-    const completedTodayTasks = todayTasks.filter(isTaskDone).length;
-    const highPriorityTasks = todayTasks.filter((task) => asText(task.priority).toLowerCase() === 'high');
+    const productivityTasks = todayTasks.filter((task) => !isWorkoutTask(task));
+    const completedTodayTasks = productivityTasks.filter(isTaskDone).length;
+    const highPriorityTasks = productivityTasks.filter((task) => asText(task.priority).toLowerCase() === 'high');
     const completedHighPriorityTasks = highPriorityTasks.filter(isTaskDone).length;
-    const overdueTasks = todayTasks.filter((task) => isTaskPending(task, new Date())).length;
+    const overdueTasks = productivityTasks.filter((task) => isTaskPending(task, new Date())).length;
     const protein = todaysMeals.reduce((total, meal) => total + meal.protein, 0);
     const workoutDone = todaysWorkout.isRestDay || todayTasks.some((task) => isWorkoutTask(task) && isTaskDone(task));
     const scoreResult = calculateDailyLifeScore({
@@ -408,7 +409,7 @@ export default function DailyHubScreen() {
       proteinGoal: macros.protein,
       waterMl: nextWater * WATER_GLASS_ML,
       waterTargetMl,
-      totalTasks: todayTasks.length,
+      totalTasks: productivityTasks.length,
       completedTasks: completedTodayTasks,
       overdueTasks,
       highPriorityTasks: highPriorityTasks.length,
@@ -445,7 +446,6 @@ export default function DailyHubScreen() {
     setWaterMl,
     todaysMeals,
     todaysWorkout,
-    waterMl,
     waterGoalGlasses,
   ]);
 
@@ -502,8 +502,10 @@ export default function DailyHubScreen() {
       setWaterCount(previous);
       setWaterMl(previous * WATER_GLASS_ML);
       Alert.alert('Water not synced', 'Your glass was added locally, but Supabase did not update.');
+      return;
     }
-  }, [currentUserId, setWaterMl, waterCount, waterGoalGlasses, waterTargetMl]);
+    await refreshToday();
+  }, [currentUserId, refreshToday, setWaterMl, waterCount, waterGoalGlasses, waterTargetMl]);
 
   const addWater = useCallback(async () => {
     await setWaterGlasses(waterCount + 1);

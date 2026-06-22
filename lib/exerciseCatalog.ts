@@ -66,6 +66,30 @@ export const WORKOUT_EXERCISES = {
   ],
 } as const;
 
+const RECOMMENDED_EXERCISE_LIMITS: Record<CatalogMuscleGroup, number> = {
+  chest: 3,
+  back: 3,
+  quads: 3,
+  hamstrings: 3,
+  shoulders: 2,
+  triceps: 2,
+  biceps: 2,
+  glutes: 2,
+  calves: 2,
+  core: 2,
+};
+
+export function limitExercisesPerMuscle<T extends CatalogExercise>(exercises: readonly T[]): T[] {
+  const counts = new Map<CatalogMuscleGroup, number>();
+
+  return exercises.filter((item) => {
+    const count = counts.get(item.muscleGroup) ?? 0;
+    if (count >= RECOMMENDED_EXERCISE_LIMITS[item.muscleGroup]) return false;
+    counts.set(item.muscleGroup, count + 1);
+    return true;
+  }).map((item) => ({ ...item }));
+}
+
 export function exercisesForWorkoutLabel(label: string): CatalogExercise[] {
   const key = label.toLowerCase();
   if (/(rest|recover|recovery|mobility|walk|off)/i.test(label)) return [];
@@ -78,6 +102,10 @@ export function exercisesForWorkoutLabel(label: string): CatalogExercise[] {
     WORKOUT_EXERCISES.legs[2], WORKOUT_EXERCISES.push[0], WORKOUT_EXERCISES.pull[0],
     WORKOUT_EXERCISES.upper[6], WORKOUT_EXERCISES.lower[13],
   ].map((item) => ({ ...item }));
+}
+
+export function recommendedExercisesForWorkoutLabel(label: string): CatalogExercise[] {
+  return limitExercisesPerMuscle(exercisesForWorkoutLabel(label));
 }
 
 export const EXERCISE_CATALOG = Array.from(

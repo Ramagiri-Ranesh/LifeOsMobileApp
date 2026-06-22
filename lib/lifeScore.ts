@@ -50,12 +50,14 @@ function clampScore(value: number) {
 }
 
 function targetAdherenceScore(actual: number, target: number, toleranceRatio = 0.1, zeroAtRatio = 0.55) {
-  if (target <= 0) return 50;
+  if (target <= 0) return 0;
 
-  const differenceRatio = Math.abs(actual / target - 1);
-  if (differenceRatio <= toleranceRatio) return 100;
+  const ratio = Math.max(0, actual) / target;
+  if (ratio <= 1) return clampScore(ratio * 100);
+  if (ratio <= 1 + toleranceRatio) return 100;
 
-  const score = 100 - ((differenceRatio - toleranceRatio) / Math.max(0.01, zeroAtRatio - toleranceRatio)) * 100;
+  const excessRatio = ratio - 1;
+  const score = 100 - ((excessRatio - toleranceRatio) / Math.max(0.01, zeroAtRatio - toleranceRatio)) * 100;
   return clampScore(score);
 }
 
@@ -66,23 +68,27 @@ function weightedAverage(parts: Array<{ score: number; weight: number }>) {
 }
 
 function calculateFitnessScore(input: DailyLifeScoreInput) {
-  if (input.isRestDay) return 85;
+  if (input.isRestDay) return 100;
   if (input.workoutCompleted) return 100;
-  if (input.activeSetCount > 0) return clampScore(55 + input.activeSetCount * 6);
-  return 40;
+  return clampScore(input.activeSetCount * 10);
 }
 
 export function calculateDailyLifeScore(input: DailyLifeScoreInput): DailyLifeScoreResult {
   const caloriesScore = targetAdherenceScore(input.calories, input.calorieGoal);
   const proteinScore =
-    input.proteinGoal > 0 ? calculateGoalScore(Math.min(input.protein, input.proteinGoal), input.proteinGoal) : 50;
+    input.proteinGoal > 0 ? calculateGoalScore(Math.min(input.protein, input.proteinGoal), input.proteinGoal) : 0;
   const productivityScore =
-    input.totalTasks > 0 ? calculateGoalScore(input.completedTasks, input.totalTasks) : 60;
-  const overdueScore = clampScore(100 - input.overdueTasks * 20);
+    input.totalTasks > 0 ? calculateGoalScore(input.completedTasks, input.totalTasks) : 0;
   const priorityScore =
     input.highPriorityTasks > 0
       ? calculateGoalScore(input.completedHighPriorityTasks, input.highPriorityTasks)
       : productivityScore;
+  const alignmentScore = input.totalTasks > 0
+    ? clampScore(weightedAverage([
+        { score: productivityScore, weight: 0.5 },
+        { score: priorityScore, weight: 0.5 },
+      ]) - input.overdueTasks * 15)
+    : 0;
 
   const components: LifeScoreComponents = {
     nutritionScore: weightedAverage([
@@ -92,11 +98,7 @@ export function calculateDailyLifeScore(input: DailyLifeScoreInput): DailyLifeSc
     fitnessScore: calculateFitnessScore(input),
     productivityScore,
     hydrationScore: calculateGoalScore(input.waterMl, input.waterTargetMl),
-    alignmentScore: weightedAverage([
-      { score: productivityScore, weight: 0.35 },
-      { score: overdueScore, weight: 0.35 },
-      { score: priorityScore, weight: 0.3 },
-    ]),
+    alignmentScore,
   };
 
   return {
