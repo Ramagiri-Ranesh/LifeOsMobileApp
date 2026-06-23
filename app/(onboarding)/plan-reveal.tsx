@@ -12,7 +12,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { calculateGoalCalorieTarget, calculateHydrationTarget, calculateMacros, calculateTDEE, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
+import { callAI } from '@/lib/ai';
+import { calculateGoalCalorieTarget, calculateHydrationTarget, calculateMacros, calculateTDEE, normalizeWaterTargetMl, type ActivityLevel, type FitnessGoal } from '@/lib/calculations';
 import { colors, radii, spacing, typography } from '@/lib/design';
 import { recommendedExercisesForWorkoutLabel } from '@/lib/exerciseCatalog';
 import { useUserStore, type GeneratedPlan, type UserProfile } from '@/stores/useUserStore';
@@ -81,8 +82,13 @@ export default function PlanRevealScreen() {
       }),
     [draft.gymDaysPerWeek, fallbackCalorieTarget, fallbackMacros, fallbackWaterTargetMl, goalCalories.calorieAdjustment, maintenanceCalories],
   );
-  const plan = fallbackPlan;
-  const aiStatus = 'Plan calculated locally. AI is available only after registration.';
+  const [plan, setPlan] = useState<WeekPlan>(fallbackPlan);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(draft.aiCalcCalories);
+  const [aiStatus, setAiStatus] = useState(
+    draft.aiCalcCalories
+      ? 'AI is calculating your starting calories, macros, water, and workout split...'
+      : 'Plan calculated with standard LifeOS formulas.',
+  );
   const [isSaving, setIsSaving] = useState(false);
   const checkScale = useSharedValue(0.4);
   const checkOpacity = useSharedValue(0);
@@ -95,6 +101,63 @@ export default function PlanRevealScreen() {
     checkScale.value = withSpring(1, { damping: 10, stiffness: 130 });
     checkOpacity.value = withTiming(1, { duration: 220 });
   }, [checkOpacity, checkScale]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!draft.aiCalcCalories) {
+      setPlan(fallbackPlan);
+      setIsGeneratingAI(false);
+      setAiStatus('Plan calculated with standard LifeOS formulas.');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setPlan(fallbackPlan);
+    setIsGeneratingAI(true);
+    setAiStatus('AI is calculating your starting calories, macros, water, and workout split...');
+
+    callAI(
+      [
+        'Generate the initial LifeOS registration plan from the onboarding answers.',
+        'Return only JSON with keys maintenanceCalories, calorieTarget, macros { protein, carbs, fat }, waterTargetMl, workoutSplit, dayPills exactly 7 short labels, firstWeekGoals exactly 4 short goals, and note.',
+        'Calculate calories and macros using the user goal, current weight, target weight, weekly pace, target date, age, gender, height, and gym days.',
+        'Respect foodsAvoided. Keep the workout split realistic for the selected gym days and experience level.',
+        'waterTargetMl must be required daily millilitres. Do not return markdown.',
+      ].join(' '),
+      {
+        onboardingProfile: draft,
+        fallbackPlan,
+        activityLevel,
+        fitnessGoal,
+        plannedWeeklyChangeKg: goalCalories.plannedWeeklyChangeKg,
+      },
+      { purpose: 'registration_plan', allowOpenAI: true, allowLocalAI: false, responseFormat: 'json_object' },
+    )
+      .then((response) => {
+        if (cancelled) return;
+        const aiPlan = parseRegistrationPlan(response, fallbackPlan);
+        if (!aiPlan) {
+          setAiStatus('AI could not return a valid plan, so LifeOS kept the safe calculated plan.');
+          return;
+        }
+        setPlan(aiPlan);
+        setAiStatus('AI calculated this starting plan from your registration answers.');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        if (__DEV__) console.debug('Registration AI plan unavailable.', error);
+        setAiStatus('AI is unavailable right now, so LifeOS kept the safe calculated plan.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsGeneratingAI(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activityLevel, draft, fallbackPlan, fitnessGoal, goalCalories.plannedWeeklyChangeKg]);
 
   const fullProfile: UserProfile = {
     name: draft.name,
@@ -121,7 +184,7 @@ export default function PlanRevealScreen() {
   };
 
   const handleFinish = () => {
-    if (isSaving) return;
+    if (isSaving || isGeneratingAI) return;
 
     setIsSaving(true);
     const generatedPlan: GeneratedPlan = {
@@ -137,7 +200,7 @@ export default function PlanRevealScreen() {
     setGeneratedPlan(generatedPlan);
     router.push('/(onboarding)/register');
   };
-  const isAIPlaceholderVisible = false;
+  const isAIPlaceholderVisible = draft.aiCalcCalories && isGeneratingAI;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -149,7 +212,9 @@ export default function PlanRevealScreen() {
           <Ionicons name="checkmark" color={colors.background} size={48} />
         </Animated.View>
 
-        <Text style={styles.title}>Your plan is ready, {draft.name || 'you'}</Text>
+        <Text style={styles.title}>
+          {isGeneratingAI ? `AI is building your plan, ${draft.name || 'you'}` : `Your plan is ready, ${draft.name || 'you'}`}
+        </Text>
         <Text style={styles.aiStatus}>{aiStatus}</Text>
 
         <RevealCard index={0} accentColor={colors.emerald} backgroundColor={colors.emeraldBg}>
@@ -219,10 +284,10 @@ export default function PlanRevealScreen() {
       <View style={styles.footer}>
         <Pressable
           accessibilityRole="button"
-          disabled={isSaving}
+          disabled={isSaving || isGeneratingAI}
           onPress={handleFinish}
-          style={[styles.primaryButton, isSaving && styles.primaryButtonDisabled]}>
-          <Text style={styles.primaryButtonText}>{isSaving ? 'Preparing...' : "Let's go →"}</Text>
+          style={[styles.primaryButton, (isSaving || isGeneratingAI) && styles.primaryButtonDisabled]}>
+          <Text style={styles.primaryButtonText}>{isGeneratingAI ? 'AI calculating...' : isSaving ? 'Preparing...' : "Let's go →"}</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -294,6 +359,78 @@ function buildFallbackWeekPlan(args: {
     macros: args.macros,
     waterTargetMl: args.waterTargetMl,
   };
+}
+
+function parseNumber(value: unknown, fallback: number) {
+  const parsed = typeof value === 'string' ? Number(value.replace(/[^\d.-]/g, '')) : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asStringList(value: unknown, fallback: string[], limit: number) {
+  if (!Array.isArray(value)) return fallback.slice(0, limit);
+  const items = value
+    .map((item) => String(item).trim())
+    .filter(Boolean)
+    .slice(0, limit);
+  return items.length === limit ? items : fallback.slice(0, limit);
+}
+
+function parseRegistrationPlan(response: string, fallback: WeekPlan): WeekPlan | null {
+  const jsonText = response.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '');
+  if (!jsonText) return null;
+
+  try {
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    const parsedMacros = parsed.macros && typeof parsed.macros === 'object' && !Array.isArray(parsed.macros)
+      ? parsed.macros as Record<string, unknown>
+      : {};
+    const maintenanceCalories = Math.round(parseNumber(parsed.maintenanceCalories ?? parsed.maintenance_calories ?? parsed.tdee, fallback.maintenanceCalories));
+    const calorieTarget = Math.round(parseNumber(parsed.calorieTarget ?? parsed.calorie_goal ?? parsed.calories, fallback.calorieTarget));
+    const macros = {
+      protein: Math.round(parseNumber(parsedMacros.protein, fallback.macros.protein)),
+      carbs: Math.round(parseNumber(parsedMacros.carbs, fallback.macros.carbs)),
+      fat: Math.round(parseNumber(parsedMacros.fat, fallback.macros.fat)),
+    };
+    const waterTargetMl = normalizeWaterTargetMl(
+      parsed.waterTargetMl ?? parsed.water_target_ml,
+      parsed.waterGlasses ?? parsed.water_glasses,
+      fallback.waterTargetMl,
+      false,
+    ) ?? fallback.waterTargetMl;
+    const workoutSplit = typeof parsed.workoutSplit === 'string' && parsed.workoutSplit.trim()
+      ? parsed.workoutSplit.trim()
+      : fallback.workoutSplit;
+    const dayPills = asStringList(parsed.dayPills ?? parsed.day_pills, fallback.dayPills, 7);
+    const firstWeekGoals = asStringList(parsed.firstWeekGoals ?? parsed.first_week_goals ?? parsed.goals, fallback.firstWeekGoals, 4);
+
+    if (
+      maintenanceCalories < 1000 ||
+      maintenanceCalories > 6000 ||
+      calorieTarget < 1000 ||
+      calorieTarget > 6000 ||
+      macros.protein < 40 ||
+      macros.carbs < 40 ||
+      macros.fat < 20 ||
+      dayPills.length !== 7 ||
+      firstWeekGoals.length !== 4
+    ) {
+      return null;
+    }
+
+    return {
+      workoutSplit,
+      dayPills,
+      weeklyWorkouts: buildFallbackWeeklyWorkouts(dayPills),
+      firstWeekGoals,
+      calorieTarget,
+      maintenanceCalories,
+      calorieAdjustment: calorieTarget - maintenanceCalories,
+      macros,
+      waterTargetMl,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isRestWorkout(label: string) {

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { nodeWebSocketTransport } from '@/lib/nodeWebSocket';
 import type { Database } from '@/types/database';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
@@ -19,7 +20,10 @@ const serverStorage = (() => {
   };
 })();
 
+const realtimeOptions = nodeWebSocketTransport ? { transport: nodeWebSocketTransport } : undefined;
+
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+  realtime: realtimeOptions,
   auth: {
     storage: typeof window === 'undefined' ? serverStorage : AsyncStorage,
     persistSession: true,

@@ -18,8 +18,9 @@ The nutrition/fitness target pipeline now has deterministic domain boundaries:
 
 ```text
 onboarding target weight + 0-1 kg/week pace
-  -> calculations.calculateGoalCalorieTarget (maintenance + signed pace delta)
-  -> deterministic first-week plan
+  -> if Diet Profile AI toggle is ON, lifeos-ai purpose=registration_plan calculates starting plan
+  -> otherwise calculations.calculateGoalCalorieTarget (maintenance + signed pace delta)
+  -> first-week plan
   -> registration + profile + generatedPlan + waterTargetMl
 
 body_metrics weight log
@@ -38,7 +39,7 @@ day label
   -> Gym UI / workout task
 ```
 
-The deterministic calculation/catalogue layer is authoritative during onboarding and everywhere outside the two approved AI entry points. AI can provide a bounded recalibration estimate only after registration and an explicit eligible button press; the app applies the selected surplus/deficit, derives 250 ml glasses, and prevents AI from replacing the approved exercise catalogue.
+The deterministic calculation/catalogue layer is the fallback for onboarding and the authority everywhere outside approved AI entry points. AI is allowed during registration only when the Diet Profile toggle is ON, and after registration only for explicit Coach questions or eligible body-target recalibration. The app derives 250 ml glasses, validates AI JSON before applying it, and prevents AI from replacing the approved exercise catalogue.
 
 ## 2. Current Architecture Summary
 
@@ -55,7 +56,7 @@ The deterministic calculation/catalogue layer is authoritative during onboarding
 | Notifications | Expo Notifications |
 | Local security | Expo Local Authentication |
 | Charts/visuals | Victory Native, React Native SVG, Reanimated, Skia |
-| AI | OpenAI `gpt-4o-mini` through Supabase Edge Function for coach and biweekly recalibration only |
+| AI | OpenAI `gpt-4o-mini` through Supabase Edge Function for registration plan, coach, and biweekly recalibration only |
 
 ### High-Level System
 
@@ -66,7 +67,7 @@ flowchart TD
   App --> Lib[Domain Libraries]
   Lib --> SupabaseClient[Supabase Client]
   SupabaseClient --> DB[(Supabase Postgres)]
-  Lib --> AI[lifeos-ai: coach or body_recalibration only]
+  Lib --> AI[lifeos-ai: registration_plan, coach, body_recalibration]
   Lib --> Notifications[Expo Notifications]
   Notifications --> Background[Expo Background Task]
   Background --> EdgeFn[lifeos-anomaly-alerts Edge Function]
@@ -1187,21 +1188,26 @@ File: `lib/ai.ts`
 Current behavior:
 
 - `getActiveAIModelLabel()` reflects the selected Settings provider.
-- `callAI()` requires purpose `coach` or `body_recalibration`; there is no general-purpose call path.
-- The client requires an authenticated session, and the Edge Function verifies authentication plus `profiles.onboarding_completed = true`.
+- `callAI()` requires purpose `registration_plan`, `coach`, or `body_recalibration`; there is no general-purpose call path.
+- `registration_plan` is allowed before account creation only from Plan Reveal when the onboarding toggle is enabled.
+- For `coach` and `body_recalibration`, the client requires an authenticated session, and the Edge Function verifies authentication plus `profiles.onboarding_completed = true`.
 - `coach` uses a user/day-specific durable rate-limit key and permits two requests per UTC day.
 - `body_recalibration` checks `profiles.last_body_recalibration_at` and permits generation only after 14 days.
 - A missing or invalid recalibration response does not update the profile or consume the client-side cooldown.
 - Approved production calls set `allowLocalAI: false`, so Ollama cannot bypass backend authorization or quotas.
-- Onboarding, Daily Hub, Nutrition, Goals, static insight cards, notifications, and background jobs do not invoke AI.
+- Daily Hub, Nutrition, Goals, static insight cards, notifications, and background jobs do not invoke AI.
 
 ### Approved AI flows
 
 ```mermaid
 flowchart TD
+  Guest[Onboarding user] --> Toggle{Diet Profile AI toggle on?}
+  Toggle -->|Yes| RegistrationPlan[Plan Reveal registration_plan]
+  Toggle -->|No| LocalPlan[Standard calculated plan]
+  RegistrationPlan --> Edge[lifeos-ai]
   User[Registered user] --> Coach[AI Coach question]
   Coach --> CoachLimit[2 per UTC day]
-  CoachLimit --> Edge[lifeos-ai]
+  CoachLimit --> Edge
   User --> WeightLog[Log weight to body_metrics]
   WeightLog --> Cooldown[Wait until 14-day button unlock]
   Cooldown --> Generate[Generate AI targets]
@@ -1217,7 +1223,7 @@ Create explicit provider interface:
 type AIProvider = 'openai' | 'ollama' | 'gemini';
 
 type AIRequest = {
-  purpose: 'coach' | 'body_recalibration';
+  purpose: 'registration_plan' | 'coach' | 'body_recalibration';
   prompt: string;
   context?: Record<string, unknown>;
   responseFormat?: 'text' | 'json';
@@ -1508,8 +1514,9 @@ Rationale:
 
 Before feature expansion:
 
-- [x] AI blocked before completed registration/authentication.
-- [x] Automatic onboarding, Daily Hub, Nutrition, Goals, insight, notification, and background AI calls removed.
+- [x] AI blocked before completed registration/authentication except opted-in Plan Reveal `registration_plan`.
+- [x] Automatic Daily Hub, Nutrition, Goals, insight, notification, and background AI calls removed.
+- [x] Registration Plan Reveal calls AI only when the Diet Profile toggle is ON.
 - [x] Weight logs no longer update profile weight immediately.
 - [x] Biweekly Generate AI targets flow updates profile weight and nutrition/training targets together.
 - [x] AI Coach UI and Edge Function enforce two questions per UTC day.

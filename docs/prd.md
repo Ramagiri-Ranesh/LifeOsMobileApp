@@ -16,9 +16,11 @@ This PRD is based on the current repository structure and implementation. It doe
 
 ### June 22, 2026 AI workflow status
 
-- AI is unavailable before registration is complete and the user has an authenticated profile with `onboarding_completed = true`.
-- Registration saves the deterministic starting plan and starts the first 14-day recalibration window.
-- Onboarding plan reveal, Daily Hub briefs, Nutrition, Goals, insight cards, notifications, and background work use deterministic application logic and do not call an AI provider.
+- During registration, AI is allowed only on Plan Reveal when the previous Diet Profile toggle is ON. That call uses `purpose=registration_plan` and calculates the starting calories, macros, water target, workout split, and first-week goals before account creation.
+- If the registration AI toggle is OFF or AI is unavailable, Plan Reveal uses the standard LifeOS calculated plan.
+- After registration, AI requires an authenticated profile with `onboarding_completed = true`.
+- Registration saves the starting plan and starts the first 14-day recalibration window.
+- Daily Hub briefs, Nutrition, Goals, insight cards, notifications, and background work use application logic and do not call an AI provider.
 - Logging body weight writes only to `body_metrics`; it does not immediately change `profiles.weight_kg`, calories, macros, water, or workout targets.
 - The Body Progress **Generate AI targets** action is the only target-recalibration AI path. It unlocks once per 14 days, uses the latest logged weight, and updates profile weight and targets together only after a valid AI response; failures leave the profile unchanged.
 - AI Coach allows at most two user questions per UTC day. The UI displays usage and disables the composer at two; the `lifeos-ai` Edge Function is the authoritative enforcement boundary.
@@ -44,7 +46,7 @@ LifeOS should help one user turn profile data and goals into daily execution:
 - Present a single Daily Hub for today's plan, Life Score, calories, hydration, workout, and tasks.
 - Let the user log meals, foods, workouts, body weight, water, tasks, goals, and spending.
 - Show analytics across life score, calories, workouts, strength, tasks, weight, correlations, and category scores.
-- Offer AI only for user-triggered biweekly target recalibration and two daily AI Coach questions.
+- Offer AI only for toggled registration plan generation, user-triggered biweekly target recalibration, and two daily AI Coach questions.
 - Send local notifications and background anomaly alerts.
 - Protect the app with optional biometric/device authentication.
 
@@ -72,7 +74,7 @@ LifeOS should help one user turn profile data and goals into daily execution:
 Current implementation:
 
 - OpenAI chat completions use the `lifeos-ai` Supabase Edge Function with server-side `OPENAI_API_KEY`.
-- The Edge Function accepts only authenticated `coach` and `body_recalibration` purposes after onboarding completion.
+- The Edge Function accepts `registration_plan` during onboarding when the user opts in, plus authenticated `coach` and `body_recalibration` purposes after onboarding completion.
 - Coach requests are limited to two per UTC day; body recalibration is limited by `profiles.last_body_recalibration_at` and a 14-day cooldown.
 - These production paths do not fall back to Ollama, preventing a local provider from bypassing the server limits.
 
@@ -241,7 +243,7 @@ Requirements:
 - Toggle foods eaten from the app-provided list.
 - Add/remove disliked foods.
 - Capture first and last meal times as text.
-- Toggle "Let AI calculate calories".
+- Toggle "Let AI calculate my starting targets".
 
 Primary data:
 
@@ -745,8 +747,9 @@ Requirement:
 
 Current behavior:
 
-- `callAI` requires an explicit purpose: `coach` or `body_recalibration`.
-- Both purposes require an authenticated user whose profile has completed onboarding.
+- `callAI` requires an explicit purpose: `registration_plan`, `coach`, or `body_recalibration`.
+- `registration_plan` is allowed before account creation only from Plan Reveal when the Diet Profile toggle is ON.
+- `coach` and `body_recalibration` require an authenticated user whose profile has completed onboarding.
 - `coach` is capped at two questions per UTC day using durable `ai_rate_limits` when the service-role secret is configured.
 - `body_recalibration` is rejected until 14 days after `last_body_recalibration_at`.
 - No other product surface calls `callAI`.

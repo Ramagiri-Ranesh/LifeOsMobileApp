@@ -163,8 +163,8 @@ export default function DietProfileScreen() {
 
         <View style={styles.toggleCard}>
           <View>
-            <Text style={styles.toggleTitle}>Calculate my starting targets</Text>
-            <Text style={styles.toggleSubtitle}>Uses local formulas during registration; no AI request is sent.</Text>
+            <Text style={styles.toggleTitle}>Let AI calculate my starting targets</Text>
+            <Text style={styles.toggleSubtitle}>When enabled, the next screen asks AI to calculate calories, macros, water, and workout split.</Text>
           </View>
           <Switch
             ios_backgroundColor={colors.surface2}

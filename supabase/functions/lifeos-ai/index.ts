@@ -18,7 +18,7 @@ const corsHeaders = {
 type Payload = {
   prompt?: string;
   context?: Record<string, unknown>;
-  purpose?: 'coach' | 'body_recalibration';
+  purpose?: 'coach' | 'body_recalibration' | 'registration_plan';
   responseFormat?: 'json_object';
 };
 
@@ -115,12 +115,12 @@ serve(async (req) => {
 
   try {
     const payload = (await req.json().catch(() => ({}))) as Payload;
-    if (payload.purpose !== 'coach' && payload.purpose !== 'body_recalibration') {
+    if (payload.purpose !== 'coach' && payload.purpose !== 'body_recalibration' && payload.purpose !== 'registration_plan') {
       return Response.json({ text: '', error: 'This AI request is not allowed.' }, { headers: corsHeaders, status: 403 });
     }
 
     const userId = await authenticatedUser(req);
-    if (!userId) {
+    if (!userId && payload.purpose !== 'registration_plan') {
       return Response.json({ text: '', error: 'Complete registration and sign in before using AI.' }, { headers: corsHeaders, status: 401 });
     }
 
@@ -129,19 +129,23 @@ serve(async (req) => {
     const admin = supabaseUrl && serviceRoleKey
       ? createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } })
       : null;
-    const authHeader = req.headers.get('Authorization') ?? '';
-    const profileClient = admin ?? createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false },
-    });
-    const { data: profile, error: profileError } = await profileClient
-      .from('profiles')
-      .select('onboarding_completed,last_body_recalibration_at')
-      .eq('id', userId)
-      .single();
+    let profile = null;
+    if (payload.purpose !== 'registration_plan') {
+      const authHeader = req.headers.get('Authorization') ?? '';
+      const profileClient = admin ?? createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
+        global: { headers: { Authorization: authHeader } },
+        auth: { persistSession: false },
+      });
+      const { data, error: profileError } = await profileClient
+        .from('profiles')
+        .select('onboarding_completed,last_body_recalibration_at')
+        .eq('id', userId)
+        .single();
 
-    if (profileError || profile?.onboarding_completed !== true) {
-      return Response.json({ text: '', error: 'Complete registration before using AI.' }, { headers: corsHeaders, status: 403 });
+      if (profileError || data?.onboarding_completed !== true) {
+        return Response.json({ text: '', error: 'Complete registration before using AI.' }, { headers: corsHeaders, status: 403 });
+      }
+      profile = data;
     }
 
     let limit = { allowed: true, remaining: 0, resetSeconds: 0 };
@@ -155,7 +159,7 @@ serve(async (req) => {
           { headers: rateLimitHeaders(limit), status: 429 },
         );
       }
-    } else if (profile.last_body_recalibration_at) {
+    } else if (payload.purpose === 'body_recalibration' && profile?.last_body_recalibration_at) {
       const lastGeneratedAt = new Date(profile.last_body_recalibration_at).getTime();
       const nextGeneratedAt = lastGeneratedAt + BODY_RECALIBRATION_DAYS * 24 * 60 * 60 * 1000;
       if (Number.isFinite(lastGeneratedAt) && Date.now() < nextGeneratedAt) {
@@ -200,7 +204,9 @@ serve(async (req) => {
             role: 'system',
             content: payload.purpose === 'coach'
               ? `You are the LifeOS AI coach. Use this app/user context: ${contextJson}`
-              : `You are the LifeOS body-target recalibration assistant. Return only the requested structured plan and use this app/user context: ${contextJson}`,
+              : payload.purpose === 'registration_plan'
+                ? `You are the LifeOS registration plan generator. Calculate the user's starting calories, macros, water target, workout split, and first-week goals from onboarding answers. Return only the requested JSON and use this app/user context: ${contextJson}`
+                : `You are the LifeOS body-target recalibration assistant. Return only the requested structured plan and use this app/user context: ${contextJson}`,
           },
           {
             role: 'user',

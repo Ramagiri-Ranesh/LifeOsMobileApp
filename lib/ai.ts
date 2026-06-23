@@ -5,7 +5,7 @@ import { useUserStore } from '@/stores/useUserStore';
 import { supabase } from '@/lib/supabase';
 
 type AIContext = Record<string, unknown>;
-export type AIPurpose = 'coach' | 'body_recalibration';
+export type AIPurpose = 'coach' | 'body_recalibration' | 'registration_plan';
 type CallAIOptions = {
   allowLocalAI?: boolean;
   allowOpenAI?: boolean;
@@ -96,7 +96,9 @@ export async function callAI(prompt: string, context: AIContext | undefined, opt
   if (allowOpenAI && aiModel !== 'ollama' && LIFEOS_AI_ENABLED) {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) throw new AIRequestError('Complete registration and sign in before using AI.', 401);
+      if (!sessionData.session && options.purpose !== 'registration_plan') {
+        throw new AIRequestError('Complete registration and sign in before using AI.', 401);
+      }
 
       const { data, error } = await supabase.functions.invoke('lifeos-ai', {
         body: {
