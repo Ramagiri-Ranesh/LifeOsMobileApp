@@ -259,7 +259,9 @@ export default function GymScreen() {
     .find(Boolean);
   const pulseStyle = useAnimatedStyle(() => ({
     borderColor: pulse.value > 0.5 ? colors.amberLight : colors.amber,
-    shadowOpacity: 0.18 + pulse.value * 0.32,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: `0px 0px 18px rgba(245, 158, 11, ${0.18 + pulse.value * 0.32})` }
+      : { shadowOpacity: 0.18 + pulse.value * 0.32 }),
   }));
 
   const timerFillStyle = useAnimatedStyle(() => ({
@@ -1297,8 +1299,12 @@ function createStyles(colors: ColorPalette) {
     borderWidth: 1,
     marginTop: spacing.xs,
     padding: spacing.sm,
-    shadowColor: colors.amber,
-    shadowRadius: 18,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0px 8px 18px rgba(245, 158, 11, 0.18)' }
+      : {
+          shadowColor: colors.amber,
+          shadowRadius: 18,
+        }),
   },
   exerciseCardActive: {
     borderWidth: 1.5,

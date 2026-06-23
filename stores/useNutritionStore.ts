@@ -304,6 +304,14 @@ function currentUserId() {
   return useUserStore.getState().currentUserId;
 }
 
+async function authenticatedUserId() {
+  const userId = currentUserId();
+  if (!userId) return null;
+
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user ? userId : null;
+}
+
 async function getOrCreateMealLog(date: string, mealType: MealType, userId: string) {
   const { data: existing } = await supabase
     .from('meal_logs')
@@ -392,7 +400,7 @@ export const useNutritionStore = create<NutritionState>((set) => ({
   loadDailyData: async (date) => {
     set({ loading: true });
     try {
-      const userId = currentUserId();
+      const userId = await authenticatedUserId();
       if (!userId) {
         set({ currentDate: date, todaysMeals: [], calories: 0 });
         return;
@@ -438,7 +446,9 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     return [...foods, ...fallbackResults.filter((food) => !existingNames.has(food.name.toLowerCase()))].slice(0, 20);
   },
   addFoodItem: async (food) => {
-    const userId = currentUserId();
+    const userId = await authenticatedUserId();
+    if (!userId) return null;
+
     const { data, error } = await supabase
       .from('food_items')
       .insert({
@@ -468,7 +478,7 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     });
 
     try {
-      const userId = currentUserId();
+      const userId = await authenticatedUserId();
       if (!userId) return;
 
       const mealLogId = await getOrCreateMealLog(date, mealType, userId);
@@ -504,7 +514,7 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     });
 
     try {
-      const userId = currentUserId();
+      const userId = await authenticatedUserId();
       if (!userId) return;
 
       const mealLogId = await getOrCreateMealLog(date, mealType, userId);
@@ -552,7 +562,7 @@ export const useNutritionStore = create<NutritionState>((set) => ({
     }
   },
   loadTemplates: async () => {
-    const userId = currentUserId();
+    const userId = await authenticatedUserId();
     if (!userId) {
       set({ templates: [] });
       return;
@@ -560,7 +570,7 @@ export const useNutritionStore = create<NutritionState>((set) => ({
 
     const { data, error } = await supabase
       .from('meal_templates')
-      .select('*, meal_template_items(*, food_items(*))')
+      .select('*, meal_template_items!meal_template_items_meal_template_id_fkey(*, food_items(*))')
       .eq('user_id', userId);
     if (error) {
       console.warn('Unable to load meal templates', error.message);

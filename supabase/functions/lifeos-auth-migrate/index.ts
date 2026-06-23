@@ -145,11 +145,23 @@ serve(async (req) => {
       return Response.json({ message: 'Legacy profile is missing.' }, { headers: corsHeaders, status: 409 });
     }
 
-    if (profile.auth_user_id) {
-      return Response.json({ migrated: true, email }, { headers: corsHeaders });
+    let authUserId = profile.auth_user_id ?? '';
+
+    if (authUserId) {
+      const { error: updateExistingError } = await supabase.auth.admin.updateUserById(authUserId, {
+        password,
+        email_confirm: true,
+        user_metadata: { username },
+      });
+
+      if (!updateExistingError) {
+        return Response.json({ migrated: true, email }, { headers: corsHeaders });
+      }
+
+      console.warn('Unable to update linked auth user during migration', updateExistingError);
+      authUserId = '';
     }
 
-    let authUserId = '';
     const { data: created, error: createError } = await supabase.auth.admin.createUser({
       email,
       password,

@@ -109,7 +109,15 @@ function groupedCalories(rows: LooseRow[]) {
   rows.forEach((row) => {
     const date = rowDate(row);
     if (!date) return;
-    totals.set(date, (totals.get(date) ?? 0) + (asNumber(row.calories) || asNumber(row.kcal)));
+
+    const items = Array.isArray(row.meal_log_items) ? row.meal_log_items : [];
+    const itemCalories = items.reduce<number>((sum, raw) => {
+      const item = raw && typeof raw === 'object' ? (raw as LooseRow) : {};
+      return sum + (asNumber(item.calories) || asNumber(item.kcal));
+    }, 0);
+    const calories = itemCalories || asNumber(row.calories) || asNumber(row.kcal);
+
+    totals.set(date, (totals.get(date) ?? 0) + calories);
   });
   return totals;
 }
@@ -174,6 +182,29 @@ export default function AnalyticsScreen() {
   const loadAnalytics = useCallback(async () => {
     setRefreshing(true);
     try {
+      if (!currentUserId) {
+        setLifeRows([]);
+        setMealRows([]);
+        setWorkoutRows([]);
+        setSetRows([]);
+        setTaskRows([]);
+        setWeightRows([]);
+        setFinanceRows([]);
+        return;
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session?.user) {
+        setLifeRows([]);
+        setMealRows([]);
+        setWorkoutRows([]);
+        setSetRows([]);
+        setTaskRows([]);
+        setWeightRows([]);
+        setFinanceRows([]);
+        return;
+      }
+
       const sinceIso = `${startDate}T00:00:00.000Z`;
       const [
         life,
@@ -184,25 +215,13 @@ export default function AnalyticsScreen() {
         weights,
         finance,
       ] = await Promise.all([
-        currentUserId
-          ? supabase.from('life_scores').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
-          : supabase.from('life_scores').select('*').limit(0),
-        currentUserId
-          ? supabase.from('meal_logs').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
-          : supabase.from('meal_logs').select('*').limit(0),
-        currentUserId
-          ? supabase.from('workout_sessions').select('*').eq('user_id', currentUserId).gte('completed_at', sinceIso)
-          : supabase.from('workout_sessions').select('*').limit(0),
-        currentUserId
-          ? supabase.from('workout_sets').select('*').eq('user_id', currentUserId).gte('created_at', sinceIso).limit(500)
-          : supabase.from('workout_sets').select('*').limit(0),
-        currentUserId ? supabase.from('tasks').select('*').eq('user_id', currentUserId) : supabase.from('tasks').select('*').limit(0),
-        currentUserId
-          ? supabase.from('body_metrics').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
-          : supabase.from('body_metrics').select('*').limit(0),
-        currentUserId
-          ? supabase.from('finance_transactions').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today)
-          : supabase.from('finance_transactions').select('*').limit(0),
+        supabase.from('life_scores').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today),
+        supabase.from('meal_logs').select('*, meal_log_items(calories)').eq('user_id', currentUserId).gte('date', startDate).lte('date', today),
+        supabase.from('workout_sessions').select('*').eq('user_id', currentUserId).gte('completed_at', sinceIso),
+        supabase.from('workout_sets').select('*').eq('user_id', currentUserId).gte('created_at', sinceIso).limit(500),
+        supabase.from('tasks').select('*').eq('user_id', currentUserId),
+        supabase.from('body_metrics').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today),
+        supabase.from('finance_transactions').select('*').eq('user_id', currentUserId).gte('date', startDate).lte('date', today),
       ]);
 
       if (life.error) console.warn('Unable to load life scores', life.error.message);
@@ -576,7 +595,7 @@ function ChartCard({ accent, title, subtitle, children }: { accent: string; titl
 function GoalLine({ ratio }: { ratio: number }) {
   const { styles } = useAnalyticsTheme();
   const top = Math.max(12, Math.min(CHART_HEIGHT - 18, (1 - ratio) * CHART_HEIGHT));
-  return <View pointerEvents="none" style={[styles.goalLine, { top }]} />;
+  return <View style={[styles.goalLine, { pointerEvents: 'none', top }]} />;
 }
 
 function LegendDot({ color, label }: { color: string; label: string }) {

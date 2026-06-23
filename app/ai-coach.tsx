@@ -244,29 +244,47 @@ async function loadRecentContext(
   const sinceDate = since.toISOString().slice(0, 10);
 
   try {
+    if (!currentUserId) {
+      return {
+        recentMeals: [{ date: TODAY, meals: todaysMeals }],
+        recentWorkouts: [{ activeSession, currentSplit }],
+        weeklyGoals,
+        recentLifeScores: [],
+        selectedChips: [],
+      };
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session?.user) {
+      return {
+        recentMeals: [{ date: TODAY, meals: todaysMeals }],
+        recentWorkouts: [{ activeSession, currentSplit }],
+        weeklyGoals,
+        recentLifeScores: [],
+        selectedChips: [],
+      };
+    }
+
     const [mealLogs, workouts, goals, lifeScores] = await Promise.all([
       supabase
         .from('meal_logs')
         .select('*, meal_log_items(*, food_items(*))')
+        .eq('user_id', currentUserId)
         .gte('date', sinceDate)
         .order('date', { ascending: false }),
-      currentUserId
-        ? supabase
-            .from('workout_sessions')
-            .select('*, workout_sets(*)')
-            .eq('user_id', currentUserId)
-            .order('started_at', { ascending: false })
-            .limit(5)
-        : supabase.from('workout_sessions').select('*').limit(0),
-      supabase.from('weekly_goals').select('*').limit(20),
-      currentUserId
-        ? supabase
-            .from('life_scores')
-            .select('*')
-            .eq('user_id', currentUserId)
-            .order('created_at', { ascending: false })
-            .limit(10)
-        : supabase.from('life_scores').select('*').limit(0),
+      supabase
+        .from('workout_sessions')
+        .select('*, workout_sets(*)')
+        .eq('user_id', currentUserId)
+        .order('started_at', { ascending: false })
+        .limit(5),
+      supabase.from('weekly_goals').select('*').eq('user_id', currentUserId).limit(20),
+      supabase
+        .from('life_scores')
+        .select('*')
+        .eq('user_id', currentUserId)
+        .order('created_at', { ascending: false })
+        .limit(10),
     ]);
 
     return {

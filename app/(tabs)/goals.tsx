@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -716,6 +716,7 @@ export default function GoalsScreen() {
     notify: false,
     editTaskId: '',
   });
+  const loadingGoalsRef = useRef(false);
 
   const categoryById = useMemo(() => {
     const map = new Map<string, GoalCategory>();
@@ -724,12 +725,16 @@ export default function GoalsScreen() {
   }, [categories]);
 
   const loadGoals = useCallback(async () => {
+    if (loadingGoalsRef.current) return;
+    loadingGoalsRef.current = true;
+
     if (!currentUserId) {
       setCategories([]);
       setMonthlyGoals([]);
       setWeeklyGoals([]);
       setDailyGoals([]);
       setLoading(false);
+      loadingGoalsRef.current = false;
       return;
     }
 
@@ -769,12 +774,9 @@ export default function GoalsScreen() {
       setError(message);
     } finally {
       setLoading(false);
+      loadingGoalsRef.current = false;
     }
   }, [currentUserId, generatedPlan, profile, weekOffset]);
-
-  useEffect(() => {
-    void loadGoals();
-  }, [loadGoals]);
 
   useFocusEffect(
     useCallback(() => {

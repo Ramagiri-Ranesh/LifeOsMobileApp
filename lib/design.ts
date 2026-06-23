@@ -1,4 +1,4 @@
-import { useColorScheme } from 'react-native';
+import { Platform, useColorScheme } from 'react-native';
 
 import { type AppMode, useSettingsStore } from '@/stores/useSettingsStore';
 
@@ -160,13 +160,18 @@ export const typography = {
 } as const;
 
 export const shadows = {
-  ambient: {
-    shadowColor: '#000000',
-    shadowOpacity: 0.5,
-    shadowRadius: 32,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 12,
-  },
+  ambient:
+    Platform.OS === 'web'
+      ? {
+          boxShadow: '0px 8px 32px rgba(0, 0, 0, 0.5)',
+        }
+      : {
+          shadowColor: '#000000',
+          shadowOpacity: 0.5,
+          shadowRadius: 32,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 12,
+        },
 } as const;
 
 export const domains = {
